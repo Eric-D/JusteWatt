@@ -104,7 +104,8 @@ function fitThermal(
 	days: DayStat[],
 	baseline: number,
 	thresholds: number[],
-	sign: 1 | -1
+	sign: 1 | -1,
+	minSlope = 0.3
 ): ThermalFit | null {
 	let best: { threshold: number; slope: number; sse: number } | null = null;
 	for (const th of thresholds) {
@@ -127,8 +128,8 @@ function fitThermal(
 		}
 		if (!best || sse < best.sse) best = { threshold: th, slope, sse };
 	}
-	// en dessous de 0,3 kWh par degré et par jour, l'effet se confond avec le bruit
-	if (!best || best.slope < 0.3) return null;
+	// en dessous de quelques dixièmes de kWh par degré et par jour, l'effet se confond avec le bruit
+	if (!best || best.slope < minSlope) return null;
 	return { baseline, threshold: best.threshold, slope: best.slope, total: 0 };
 }
 
@@ -242,7 +243,13 @@ export function analyse(input: AnalysisInput): Analysis {
 						.map((d) => d.kwh)
 				);
 	const heating = fitThermal(fitDays, baseline, [12, 13, 14, 15, 16, 17], -1);
-	const cooling = fitThermal(fitDays, baseline, [20, 21, 22, 23, 24], 1);
+	// la clim se mesure par rapport à un jour d'été ordinaire, plus sobre qu'un jour de
+	// mi-saison (moins d'éclairage, eau chaude plus vite chauffée)
+	const summer = fitDays
+		.filter((d) => d.temp >= 16 && d.temp <= 20 && (!heating || d.temp >= heating.threshold))
+		.map((d) => d.kwh);
+	const coolBase = summer.length >= 10 ? Math.min(baseline, median(summer)) : baseline;
+	const cooling = fitThermal(fitDays, coolBase, [18, 19, 20, 21, 22, 23, 24], 1, 0.15);
 	// talon : minimum horaire des jours sans chauffage ni clim (en hiver, une PAC qui tourne
 	// la nuit le gonflerait), de préférence sur les mois réellement mesurés
 	const neutral = withTemp.filter(
