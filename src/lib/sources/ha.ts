@@ -13,6 +13,7 @@ export class HaClient {
 	version = '';
 
 	static async connect(url: string, token: string, timeoutMs = 15000): Promise<HaClient> {
+		await presentClientCertificate(url);
 		const c = new HaClient();
 		await c.open(url, token, timeoutMs);
 		return c;
@@ -34,7 +35,11 @@ export class HaClient {
 			}
 			this.ws.onerror = () => {
 				clearTimeout(timer);
-				reject(new HaError('Connexion impossible (adresse, HTTPS ou certificat client ?)'));
+				reject(
+					new HaError(
+						'Connexion impossible. Vérifiez l’adresse (HTTPS). Si votre Home Assistant demande un certificat client, ouvrez-le une fois dans un autre onglet de ce navigateur, choisissez le certificat, puis réessayez.'
+					)
+				);
 			};
 			this.ws.onclose = () => {
 				for (const p of this.pending.values()) p.reject(new HaError('Connexion fermée'));
@@ -72,6 +77,23 @@ export class HaClient {
 
 	close() {
 		this.ws?.close();
+	}
+}
+
+/**
+ * Certificat client (mTLS) : une connexion WebSocket ne fait pas apparaître la fenêtre de
+ * choix du certificat, une requête classique si. On en fait une d'abord ; le navigateur
+ * réutilise ensuite le certificat choisi pour la WebSocket.
+ */
+async function presentClientCertificate(url: string) {
+	try {
+		await fetch(normalizeUrl(url) + '/manifest.json', {
+			mode: 'no-cors',
+			credentials: 'include',
+			cache: 'no-store'
+		});
+	} catch {
+		/* l'échec éventuel est signalé par la WebSocket */
 	}
 }
 
