@@ -58,8 +58,9 @@ export function simulate(series: TimeSeries, cfg: SystemConfig): SimulationResul
 		}
 
 		const raw = series.pvPerKwc[i] * cfg.kwc;
-		const p = Math.min(raw, acMax);
-		clipped += raw - p;
+		const added = Math.min(raw, acMax);
+		clipped += raw - added;
+		const p = added + (series.basePv ? series.basePv[i] : 0);
 		production += p;
 
 		// consommation hors appareils pilotés, puis appareils servis par priorité

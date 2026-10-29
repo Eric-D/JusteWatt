@@ -149,6 +149,22 @@
 
 	<section class="grid content-start gap-4" aria-labelledby="sources">
 		<h2 id="sources" class="sr-only">Choisir une source de données</h2>
+		<div class="grid gap-2">
+			<span class="text-sm font-medium" id="mode-label">Mon projet</span>
+			<div class="grid grid-cols-2 gap-2" role="radiogroup" aria-labelledby="mode-label">
+				{#each [[false, 'Je n’ai pas de panneaux', 'Dimensionner une installation'], [true, 'J’ai déjà des panneaux', 'Batterie, extension, pilotage']] as [on, t, d] (t)}
+					<button
+						role="radio"
+						aria-checked={app.settings.existing.enabled === on}
+						class="grid gap-0.5 rounded-xl border bg-card p-3 text-left transition-colors hover:border-foreground/30 aria-checked:border-foreground aria-checked:ring-1 aria-checked:ring-foreground"
+						onclick={() => app.setExisting(on as boolean)}
+					>
+						<span class="text-sm font-medium">{t}</span>
+						<span class="text-xs text-muted-foreground">{d}</span>
+					</button>
+				{/each}
+			</div>
+		</div>
 		<form class="grid gap-4 rounded-2xl border bg-card p-5 shadow-xs" onsubmit={connect}>
 			<div>
 				<h3 class="font-semibold">Connecter Home Assistant</h3>

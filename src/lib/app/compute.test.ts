@@ -70,3 +70,47 @@ describe('calcul d’un scénario', () => {
 		expect(performance.now() - t0).toBeLessThan(3000);
 	});
 });
+
+describe('panneaux déjà installés', () => {
+	const basePv = fx.pvPerKwc.map((v: number) => v * 3);
+	const p2: Prepared = { ...prepared, basePv, pvYears: [{ year: 2025, pv: fx.pvPerKwc, basePv }] };
+	const existing = { ...s.existing, enabled: true, kwc: 3 };
+	const battery = {
+		...s.current,
+		kwc: 0,
+		battery: defaultBattery(5),
+		investment: null,
+		premium: false
+	};
+
+	it('rien ajouté = rien gagné, rien dépensé', () => {
+		const c = buildContext(p2, { ...s, existing: { ...existing, router: true } });
+		const o = outcome(c, s.economics, { ...battery, battery: defaultBattery(0) });
+		expect(o.investment).toBe(0);
+		expect(Math.abs(o.savings)).toBeLessThan(0.01);
+		expect(o.baseline?.production).toBeGreaterThan(0);
+	});
+
+	it('une batterie économise la facture mais fait perdre le surplus vendu au contrat', () => {
+		const e = { ...s.economics, sellPrice: 0 };
+		const sold = buildContext(p2, {
+			...s,
+			existing: { ...existing, contractPrice: 0.13, contractEnd: 2040 }
+		});
+		const free = buildContext(p2, { ...s, existing });
+		const a = outcome(sold, e, battery);
+		const b = outcome(free, e, battery);
+		expect(a.savings).toBeGreaterThan(0);
+		expect(a.exportRevenue).toBeLessThan(0);
+		expect(a.finance.netGain).toBeLessThan(b.finance.netGain);
+		expect(a.sim.autonomy).toBeGreaterThan(a.baseline!.autonomy);
+	});
+
+	it('le routeur à acheter compte dans l’investissement', () => {
+		const c = buildContext(p2, { ...s, existing: { ...existing, router: false } });
+		expect(c.routerAdded).toBe(true);
+		const o = outcome(c, s.economics, { ...battery, battery: defaultBattery(0) });
+		expect(o.investment).toBe(s.economics.routerCost);
+		expect(o.savings).toBeGreaterThan(0);
+	});
+});

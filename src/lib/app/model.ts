@@ -72,6 +72,8 @@ export interface Economics {
 	pricePerKwc: number;
 	pricePerKwh: number;
 	priceFixed: number;
+	/** Routeur pour piloter le cumulus, quand il fait partie de l'ajout. */
+	routerCost: number;
 }
 
 export interface CumulusSettings {
@@ -92,11 +94,11 @@ export interface SourceSettings {
 	haUrl: string;
 	/** Statistiques HA choisies comme pilotables (cumulus…). */
 	haPilotable: string[];
-	/** Puissance déjà installée (pour retirer la production existante et caler le modèle). */
-	existingKwc: number;
 	/** Facteur de calage du modèle (1 = PVGIS). */
 	calibration: number;
 	enedisFile: string;
+	/** Courbe Enedis de production injectée (panneaux existants). */
+	injectionFile: string;
 	/** Saisie manuelle, kWh par mois (AAAA-MM). */
 	manualMonthly: Record<string, number>;
 	/** Mois exclu qui termine l'année simulée (AAAA-MM). */
@@ -105,9 +107,45 @@ export interface SourceSettings {
 	weatherYears: number;
 }
 
+/** Panneaux déjà installés : on simule ce qu'apporte un ajout par rapport à aujourd'hui. */
+export interface ExistingSettings {
+	enabled: boolean;
+	/** Panneaux en autoconsommation (avec ou sans revente du surplus). */
+	kwc: number;
+	tilt: number;
+	azimuth: number;
+	/** Un routeur pilote déjà le cumulus. */
+	router: boolean;
+	/** Contrat de revente du surplus actuel : prix et année de fin (0 = aucun contrat). */
+	contractPrice: number;
+	contractEnd: number;
+	/** Production annuelle relevée sur l'onduleur ou l'application, kWh (0 = inconnue). */
+	annualProduction: number;
+	/** Panneaux en vente totale (compteur séparé) : signalés, non simulés. */
+	totalSaleKwc: number;
+	/** Option tarifaire d'aujourd'hui ; null = la même que celle simulée. */
+	currentTariff: Tariff | null;
+}
+
+export function defaultExisting(): ExistingSettings {
+	return {
+		enabled: false,
+		kwc: 3,
+		tilt: 30,
+		azimuth: 0,
+		router: false,
+		contractPrice: 0,
+		contractEnd: 0,
+		annualProduction: 0,
+		totalSaleKwc: 0,
+		currentTariff: null
+	};
+}
+
 export interface ProjectSettings {
 	version: 1;
 	source: SourceSettings;
+	existing: ExistingSettings;
 	site: SiteSettings;
 	evolutions: Evolution[];
 	cumulus: CumulusSettings;
@@ -180,13 +218,14 @@ export function defaultSettings(): ProjectSettings {
 			kind: 'none',
 			haUrl: '',
 			haPilotable: [],
-			existingKwc: 0,
 			calibration: 1,
 			enedisFile: '',
+			injectionFile: '',
 			manualMonthly: {},
 			endMonth: '',
 			weatherYears: 5
 		},
+		existing: defaultExisting(),
 		site: {
 			name: '',
 			latitude: 46.6,
@@ -215,7 +254,8 @@ export function defaultSettings(): ProjectSettings {
 			batteryShare: 0.6,
 			pricePerKwc: 1500,
 			pricePerKwh: 450,
-			priceFixed: 1000
+			priceFixed: 1000,
+			routerCost: 500
 		},
 		current: defaultScenario(),
 		scenarios: [],

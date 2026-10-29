@@ -2,13 +2,15 @@
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { app } from '#lib/app/store.svelte.js';
-	import { MAP_BATTERY, MAP_KWC, type MapCell } from '#lib/app/compute.js';
+	import { MAP_BATTERY, MAP_KWC, MAP_KWC_ADDED, type MapCell } from '#lib/app/compute.js';
 	import { fmt } from '#lib/format.js';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import * as ToggleGroup from '#lib/components/ui/toggle-group/index.js';
 	import Tooltip from '#lib/components/charts/Tooltip.svelte';
 
 	type Metric = 'gain' | 'payback' | 'autonomy';
+	const upgrade = $derived(!!app.ctx?.baseline);
+	const KWCS = $derived(upgrade ? MAP_KWC_ADDED : MAP_KWC);
 	let metric = $state<Metric>('gain');
 	let hover = $state<{ c: MapCell; x: number; y: number } | null>(null);
 	let width = $state(800);
@@ -61,6 +63,14 @@
 		}).filter((x): x is MapCell => !!x)
 	);
 
+	/** Libellé d'une combinaison ; en mode ajout, « +3 kWc », « pilotage seul »… */
+	function label3(c: MapCell) {
+		const bat = c.capacity ? `${fmt.dec(c.capacity)} kWh` : '';
+		if (!upgrade) return `${fmt.kwc(c.kwc)} + ${bat || 'sans batterie'}`;
+		const parts = [c.kwc ? `+${fmt.kwc(c.kwc)}` : '', bat ? `batterie ${bat}` : ''].filter(Boolean);
+		return parts.length ? parts.join(' + ') : 'Pilotage seul';
+	}
+
 	function open(c: MapCell) {
 		const sc = app.settings.current;
 		sc.kwc = c.kwc;
@@ -83,7 +93,9 @@
 	<div class="grid gap-6">
 		<div class="flex flex-wrap items-end justify-between gap-3">
 			<div>
-				<h1 class="text-2xl font-semibold tracking-tight">Toutes les combinaisons</h1>
+				<h1 class="text-2xl font-semibold tracking-tight">
+					{upgrade ? 'Que rajouter ?' : 'Toutes les combinaisons'}
+				</h1>
 				<p class="text-sm text-muted-foreground">
 					{#if app.map}{cells.length} configurations simulées heure par heure en {fmt.dec(
 							app.map.ms / 1000
@@ -112,7 +124,9 @@
 					>
 						<thead>
 							<tr>
-								<th class="w-16 pb-1 text-left font-normal text-muted-foreground">kWc ↓</th>
+								<th class="w-16 pb-1 text-left font-normal text-muted-foreground"
+									>{upgrade ? 'kWc ajoutés' : 'kWc'} ↓</th
+								>
 								{#each MAP_BATTERY as b (b)}
 									<th class="num pb-1 font-mono font-normal text-muted-foreground"
 										>{b ? `${fmt.dec(b)} kWh` : 'sans'}</th
@@ -121,7 +135,7 @@
 							</tr>
 						</thead>
 						<tbody>
-							{#each [...MAP_KWC].reverse() as k (k)}
+							{#each [...KWCS].reverse() as k (k)}
 								<tr>
 									<th class="num pr-2 text-left font-mono font-normal text-muted-foreground"
 										>{fmt.dec(k)}</th
@@ -196,9 +210,7 @@
 					<div class="grid gap-3 rounded-xl border bg-card p-4">
 						<span class="text-xs text-muted-foreground">Meilleur gain</span>
 						<span class="text-lg font-semibold">
-							{fmt.kwc(best.kwc)} + {best.capacity
-								? `${fmt.dec(best.capacity)} kWh`
-								: 'sans batterie'}
+							{label3(best)}
 						</span>
 						<dl class="num grid grid-cols-3 gap-2 font-mono text-sm">
 							<div>

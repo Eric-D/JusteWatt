@@ -20,6 +20,9 @@
 	const e = $derived(app.settings.economics);
 	const r = $derived(app.result);
 	const cons = $derived(app.prepared?.cons);
+	/** Panneaux déjà installés : on affiche ce qu'apporte l'ajout. */
+	const upgrade = $derived(!!r?.baseline);
+	const ex = $derived(app.settings.existing);
 
 	const panels = $derived(Math.round((sc.kwc * 1000) / PANEL_WC));
 	const area = $derived(panels * PANEL_M2);
@@ -83,13 +86,15 @@
 			<section class="grid gap-4 rounded-xl border bg-card p-4">
 				<h2 class="text-sm font-semibold">Installation</h2>
 				<Field
-					label="Panneaux"
+					label={upgrade ? 'Panneaux ajoutés' : 'Panneaux'}
 					bind:value={sc.kwc}
 					min={0}
 					max={18}
 					step={0.5}
-					display={fmt.kwc}
-					hint="{panels} × {PANEL_WC} Wc · {fmt.int(area)} m² sur {fmt.int(
+					display={(v) => (upgrade && !v ? 'aucun' : fmt.kwc(v))}
+					hint="{upgrade
+						? `${fmt.kwc(ex.kwc + sc.kwc)} au total · `
+						: ''}{panels} × {PANEL_WC} Wc · {fmt.int(area)} m² sur {fmt.int(
 						s.site.surface
 					)} m²{area > s.site.surface ? ' — dépasse la surface du toit' : ''}"
 				/>
@@ -254,21 +259,27 @@
 			<div class="grid grid-cols-2 gap-3 xl:grid-cols-4">
 				<Stat
 					label="Autonomie"
-					value={fmt.pct(r.sim.autonomy)}
+					value={r.baseline
+						? `${fmt.pct(r.baseline.autonomy)} → ${fmt.pct(r.sim.autonomy)}`
+						: fmt.pct(r.sim.autonomy)}
 					sub="{fmt.pct(r.sim.selfConsumption)} de la production consommée"
 				/>
 				<Stat
-					label="Économie la 1re année"
+					label={upgrade ? 'Ce que l’ajout fait gagner / an' : 'Économie la 1re année'}
 					value={fmt.eur(r.savings + r.exportRevenue)}
-					sub="dont {fmt.eur(r.exportRevenue)} de revente"
+					sub={upgrade
+						? r.exportRevenue < -0.5
+							? `dont ${fmt.eur(-r.exportRevenue)} de surplus plus vendu`
+							: `facture −${fmt.eur(r.savings)}`
+						: `dont ${fmt.eur(r.exportRevenue)} de revente`}
 				/>
 				<Stat
-					label="Retour sur investissement"
+					label={upgrade ? 'Retour de l’ajout' : 'Retour sur investissement'}
 					value={fmt.years(r.finance.payback)}
 					sub="{fmt.eur(r.investment - r.premium)} investis"
 				/>
 				<Stat
-					label="Gain net sur {e.years} ans"
+					label="{upgrade ? 'Gain net de l’ajout' : 'Gain net'} sur {e.years} ans"
 					value={fmt.eur(r.finance.netGain)}
 					sub="VAN {fmt.eur(r.finance.npv)} · TRI {r.finance.irr === null
 						? '—'
@@ -285,6 +296,12 @@
 								r.sim.import
 							)} · surplus {fmt.kwh(r.sim.export)}
 						</p>
+						{#if r.baseline}
+							<p class="text-sm text-muted-foreground">
+								Aujourd’hui ({fmt.kwc(ex.kwc)}) : production {fmt.kwh(r.baseline.production)} · achat
+								{fmt.kwh(r.baseline.import)} · surplus {fmt.kwh(r.baseline.export)}
+							</p>
+						{/if}
 					</div>
 					{#if shares}
 						<div

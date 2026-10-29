@@ -240,41 +240,5 @@
 					: 'Aucune part pilotable mesurée : choisissez le cumulus dans les appareils Home Assistant.'}
 			</p>
 		</section>
-
-		<section class="grid gap-3 rounded-xl border bg-card p-4">
-			<h3 class="text-sm font-semibold">Installation existante</h3>
-			<NumberInput
-				label="Panneaux déjà installés"
-				bind:value={s.source.existingKwc}
-				step={0.1}
-				suffix="kWc"
-			/>
-			<p class="text-xs text-muted-foreground">
-				Leur production (tableau Énergie) est rajoutée à la consommation pour simuler à partir de
-				zéro.
-			</p>
-			{#if app.measuredRatio !== null}
-				<p class="text-sm">
-					Production mesurée = <strong class="num font-mono">{fmt.pct(app.measuredRatio)}</strong> du
-					modèle.
-				</p>
-				<Button
-					size="sm"
-					variant="outline"
-					onclick={() =>
-						(s.source.calibration =
-							Math.round(s.source.calibration * app.measuredRatio! * 1000) / 1000)}
-					>Caler le modèle sur cette mesure</Button
-				>
-			{/if}
-			{#if s.source.calibration !== 1}
-				<p class="text-xs text-muted-foreground">
-					Calage actuel ×{s.source.calibration.toFixed(3)} ·
-					<button class="underline" onclick={() => (s.source.calibration = 1)}
-						>revenir au modèle</button
-					>
-				</p>
-			{/if}
-		</section>
 	</div>
 </div>

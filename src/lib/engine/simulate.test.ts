@@ -118,3 +118,14 @@ describe('simulate — pertes réelles', () => {
 		expect(r.load).toBeCloseTo(r.production - r.export + r.import, 6);
 	});
 });
+
+describe('simulate — panneaux déjà installés', () => {
+	it('la production existante compte comme du solaire, sans coût', () => {
+		const base = series.pvPerKwc;
+		const withBase = { ...series, basePv: Array.from(base, (v) => v * 3) };
+		const a = simulate(withBase, config({ kwc: 0, battery: 0, pmax: 0, router: false }));
+		const b = simulate(series, config({ kwc: 3, battery: 0, pmax: 0, router: false }));
+		expect(a.production).toBeCloseTo(b.production, 6);
+		expect(a.import).toBeCloseTo(b.import, 6);
+	});
+});

@@ -4,6 +4,8 @@ export interface FinanceInput {
 	savings: number;
 	/** Revente du surplus l'année 1, € (prix garanti, non indexé). */
 	exportRevenue: number;
+	/** Revente à partir d'une année donnée (fin d'un contrat d'achat, par ex.). */
+	exportRevenueAfter?: { year: number; value: number };
 	/** Hausse annuelle du prix d'achat (0.03 = 3 %). */
 	inflation: number;
 	/** Perte annuelle de production (0.005 = 0,5 %). */
@@ -34,7 +36,13 @@ export function finance(f: FinanceInput): FinanceResult {
 	for (let t = 1; t <= f.years; t++) {
 		const deg = Math.pow(1 - f.degradation, t - 1);
 		const infl = Math.pow(1 + f.inflation, t - 1);
-		let cf = (f.savings * infl + f.exportRevenue) * deg - f.yearlyCosts * infl;
+		let cf =
+			(f.savings * infl +
+				(f.exportRevenueAfter && t >= f.exportRevenueAfter.year
+					? f.exportRevenueAfter.value
+					: f.exportRevenue)) *
+				deg -
+			f.yearlyCosts * infl;
 		for (const r of f.replacements) if (r.year === t) cf -= r.cost;
 		cashflows.push(cf);
 	}

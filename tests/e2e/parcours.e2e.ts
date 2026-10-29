@@ -127,3 +127,21 @@ test('lien de partage chiffré : mêmes résultats chez le destinataire', async 
 	await expect.poll(() => value(other)).toBe(before);
 	expect(other.url()).not.toContain('#e=');
 });
+
+test('j’ai déjà des panneaux : ce que rapporte une batterie', async ({ page }) => {
+	await page.goto('/');
+	await page.getByRole('radio', { name: /J’ai déjà des panneaux/ }).click();
+	await page.getByRole('button', { name: /démonstration/ }).click();
+	await expect(page).toHaveURL(/simulateur/);
+	await expect(page.getByText('Retour de l’ajout')).toBeVisible();
+	await expect(page.getByText(/Aujourd’hui \(3,0 kWc\)/)).toBeVisible();
+	await expect(page.getByText(/% → \d+ %/)).toBeVisible();
+
+	await page.getByRole('link', { name: 'Carte' }).first().click();
+	await expect(page.getByRole('heading', { name: 'Que rajouter ?' })).toBeVisible();
+	await expect(page.getByText(/56 configurations simulées/)).toBeVisible({ timeout: 30_000 });
+
+	await page.getByRole('link', { name: 'Données' }).first().click();
+	await expect(page.getByRole('tab', { name: 'Mes panneaux' })).toBeVisible();
+	await expect(page.getByText('Mes panneaux actuels')).toBeVisible();
+});

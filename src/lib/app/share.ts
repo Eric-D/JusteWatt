@@ -14,6 +14,7 @@ export type SharedProject = Pick<
 	ProjectSettings,
 	'economics' | 'current' | 'scenarios' | 'quotes' | 'evolutions' | 'cumulus' | 'gridCharge'
 > & {
+	existing?: ProjectSettings['existing'];
 	planes: SiteSettings['planes'];
 	surface: number;
 };
@@ -165,6 +166,7 @@ export function buildPayload(
 			evolutions: s.evolutions,
 			cumulus: s.cumulus,
 			gridCharge: s.gridCharge,
+			existing: s.existing,
 			planes: s.site.planes,
 			surface: s.site.surface
 		}

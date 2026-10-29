@@ -44,13 +44,15 @@ type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void };
 class AppStore {
 	settings = $state<ProjectSettings>(load());
 	prepared = $state.raw<Prepared | null>(null);
-	raw = $state.raw<{ ha: RawHa | null; enedis: RawEnedis | null; shared: SharedData | null }>({
-		ha: null,
-		enedis: null,
-		shared: null
-	});
+	raw = $state.raw<{
+		ha: RawHa | null;
+		enedis: RawEnedis | null;
+		injection: RawEnedis | null;
+		shared: SharedData | null;
+	}>({ ha: null, enedis: null, injection: null, shared: null });
 	ha = $state.raw<HaImport | null>(null);
 	measuredRatio = $state<number | null>(null);
+	calibratedBy = $state<'ha' | 'annual' | null>(null);
 	busy = $state('');
 	error = $state('');
 	ready = $state(false);
@@ -67,7 +69,12 @@ class AppStore {
 			this.settings.source.calibration,
 			this.settings.source.endMonth,
 			this.settings.source.weatherYears,
-			this.settings.source.kind
+			this.settings.source.kind,
+			this.settings.existing.enabled,
+			this.settings.existing.kwc,
+			this.settings.existing.tilt,
+			this.settings.existing.azimuth,
+			this.settings.existing.annualProduction
 		])
 	);
 	get dirty() {
@@ -86,7 +93,8 @@ class AppStore {
 			evolutions: $state.snapshot(s.evolutions),
 			cumulus: $state.snapshot(s.cumulus),
 			gridCharge: $state.snapshot(s.gridCharge),
-			economics: $state.snapshot(s.economics)
+			economics: $state.snapshot(s.economics),
+			existing: $state.snapshot(s.existing)
 		});
 	});
 
@@ -117,12 +125,18 @@ class AppStore {
 				}
 			});
 		});
-		const [ha, enedis, shared] = await Promise.all([
+		const [ha, enedis, injection, shared] = await Promise.all([
 			idb.get<RawHa>('raw.ha'),
 			idb.get<RawEnedis>('raw.enedis'),
+			idb.get<RawEnedis>('raw.injection'),
 			idb.get<SharedData>('raw.shared')
 		]);
-		this.raw = { ha: ha ?? null, enedis: enedis ?? null, shared: shared ?? null };
+		this.raw = {
+			ha: ha ?? null,
+			enedis: enedis ?? null,
+			injection: injection ?? null,
+			shared: shared ?? null
+		};
 		this.ready = true;
 		if (this.hasData) await this.recompute();
 	}
@@ -153,6 +167,7 @@ class AppStore {
 			const r = await prepare($state.snapshot(this.settings), this.raw, (m) => (this.busy = m));
 			this.prepared = r.prepared;
 			this.measuredRatio = r.measuredRatio;
+			this.calibratedBy = r.calibratedBy;
 			this.map = null;
 			this.spread = null;
 			await this.syncWorker();
@@ -162,8 +177,31 @@ class AppStore {
 	async startDemo() {
 		const s = defaultSettings();
 		s.current = { ...s.current, name: 'Démonstration', kwc: 4.5 };
+		if (this.settings.existing.enabled) {
+			s.existing = { ...s.existing, enabled: true };
+			this.prepareUpgrade(s);
+		}
 		this.settings = s;
 		await this.startDemoKeeping();
+	}
+
+	/** Mode « j'ai déjà des panneaux » : le scénario devient un ajout, sans revente. */
+	setExisting(on: boolean) {
+		const s = this.settings;
+		s.existing.enabled = on;
+		if (on) this.prepareUpgrade(s);
+	}
+
+	private prepareUpgrade(s: ProjectSettings) {
+		s.economics.sellPrice = 0;
+		s.current = {
+			...s.current,
+			name: 'Batterie',
+			kwc: 0,
+			battery: { ...s.current.battery, capacity: 5, power: 2.5 },
+			investment: null,
+			premium: false
+		};
 	}
 
 	/** Données de démonstration, en gardant toit, hypothèses, scénarios et devis. */
@@ -272,6 +310,27 @@ class AppStore {
 		if (this.hasData) await this.recompute();
 	}
 
+	/** Courbe Enedis de production injectée (panneaux existants). */
+	async importInjection(file: File) {
+		await this.run('Lecture de la courbe d’injection', async () => {
+			const data = parseEnedisCsv(await file.text(), this.settings.site.tz);
+			if (data.kind !== 'curve')
+				throw new Error('Il faut la courbe de production au pas de 30 min');
+			const raw = toRawEnedis(data);
+			await idb.set('raw.injection', raw);
+			this.raw = { ...this.raw, injection: raw };
+			this.settings.source.injectionFile = `${file.name} · ${data.first} → ${data.last}`;
+		});
+		if (!this.error && this.hasData) await this.recompute();
+	}
+
+	async clearInjection() {
+		await idb.del('raw.injection');
+		this.raw = { ...this.raw, injection: null };
+		this.settings.source.injectionFile = '';
+		if (this.hasData) await this.recompute();
+	}
+
 	async useManual(monthly: Record<string, number>) {
 		this.settings.source.kind = 'manual';
 		this.settings.source.manualMonthly = monthly;
@@ -285,7 +344,7 @@ class AppStore {
 		await idb.clear();
 		this.settings = defaultSettings();
 		this.prepared = null;
-		this.raw = { ha: null, enedis: null, shared: null };
+		this.raw = { ha: null, enedis: null, injection: null, shared: null };
 		this.ha = null;
 		this.map = null;
 		this.spread = null;
@@ -312,18 +371,20 @@ class AppStore {
 			quotes: pr.quotes,
 			evolutions: pr.evolutions,
 			cumulus: pr.cumulus ?? s.cumulus,
-			gridCharge: pr.gridCharge ?? s.gridCharge
+			gridCharge: pr.gridCharge ?? s.gridCharge,
+			existing: pr.existing ?? s.existing
 		});
 		s.site.planes = pr.planes;
 		s.site.surface = pr.surface ?? s.site.surface;
 		if (p.site) Object.assign(s.site, p.site);
 		await idb.del('raw.ha');
 		await idb.del('raw.enedis');
+		await idb.del('raw.injection');
 		if (p.data) {
 			await idb.set('raw.shared', p.data);
 			s.source.kind = 'shared';
 		} else await idb.del('raw.shared');
-		this.raw = { ha: null, enedis: null, shared: p.data ?? null };
+		this.raw = { ha: null, enedis: null, injection: null, shared: p.data ?? null };
 		if (p.ha) {
 			localStorage.setItem(TOKEN_KEY, JSON.stringify(p.ha));
 			s.source.haUrl = p.ha.url;
@@ -362,7 +423,8 @@ class AppStore {
 				evolutions: s.evolutions,
 				cumulus: s.cumulus,
 				gridCharge: s.gridCharge,
-				economics: s.economics
+				economics: s.economics,
+				existing: s.existing
 			}
 		});
 	}

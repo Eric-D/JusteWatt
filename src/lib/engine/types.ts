@@ -12,8 +12,10 @@ export interface TimeSeries {
 	load: number[];
 	/** Part pilotable par le routeur (cumulus…), incluse dans `load`, kWh par pas. */
 	pilotable: number[];
-	/** Production pour 1 kWc, kWh par pas. */
+	/** Production pour 1 kWc, kWh par pas (panneaux simulés). */
 	pvPerKwc: number[];
+	/** Production des panneaux déjà installés, kWh par pas (hors écrêtage simulé). */
+	basePv?: ArrayLike<number>;
 }
 
 export interface Battery {

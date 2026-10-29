@@ -7,8 +7,9 @@
 	import RoofPanel from '#lib/components/data/RoofPanel.svelte';
 	import EvolutionsPanel from '#lib/components/data/EvolutionsPanel.svelte';
 	import TariffPanel from '#lib/components/data/TariffPanel.svelte';
+	import ExistingPanel from '#lib/components/data/ExistingPanel.svelte';
 
-	let tab = $state('conso');
+	let tab = $state(app.settings.existing.enabled ? 'existant' : 'conso');
 </script>
 
 <svelte:head><title>Données · JusteWatt</title></svelte:head>
@@ -38,11 +39,17 @@
 		</div>
 		<Tabs.Root bind:value={tab}>
 			<Tabs.List class="w-full justify-start overflow-x-auto sm:w-auto">
+				{#if app.settings.existing.enabled}<Tabs.Trigger value="existant">Mes panneaux</Tabs.Trigger
+					>{/if}
 				<Tabs.Trigger value="conso">Consommation</Tabs.Trigger>
 				<Tabs.Trigger value="toit">Toit</Tabs.Trigger>
 				<Tabs.Trigger value="evolutions">Évolutions</Tabs.Trigger>
 				<Tabs.Trigger value="tarif">Tarif</Tabs.Trigger>
+				{#if !app.settings.existing.enabled}<Tabs.Trigger value="existant"
+						>Déjà équipé ?</Tabs.Trigger
+					>{/if}
 			</Tabs.List>
+			<Tabs.Content value="existant" class="pt-4"><ExistingPanel /></Tabs.Content>
 			<Tabs.Content value="conso" class="pt-4"><ConsumptionPanel /></Tabs.Content>
 			<Tabs.Content value="toit" class="pt-4"><RoofPanel /></Tabs.Content>
 			<Tabs.Content value="evolutions" class="pt-4"><EvolutionsPanel /></Tabs.Content>
