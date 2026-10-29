@@ -1,7 +1,13 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
 	import { app } from '#lib/app/store.svelte.js';
-	import { analyse, SEASONS, type Season } from '#lib/app/analysis.js';
+	import {
+		analyse,
+		SEASONS,
+		type DeviceCategory,
+		type MonthStat,
+		type Season
+	} from '#lib/app/analysis.js';
 	import { defaultTariff } from '#lib/app/model.js';
 	import type { Tariff, TariffKind } from '#lib/engine/tariffs.js';
 	import { fmt, monthLabel } from '#lib/format.js';
@@ -72,7 +78,39 @@
 	const cheapest = $derived(a ? [...a.tariffs].sort((x, y) => x.total - y.total)[0] : null);
 	const costMax = $derived(a ? Math.max(...a.tariffs.map((t) => t.total)) : 1);
 	const price = $derived(yearCost && a ? yearCost.energy / a.total : current.base);
-	const heatShare = $derived(a?.heating ? a.heating.total / a.total : 0);
+	/** Chauffage et clim : mesurés par appareil, plus l'estimation pour le reste. */
+	const sumMonths = (f: (m: MonthStat) => number) =>
+		a ? a.monthly.reduce((x, m) => x + f(m), 0) : 0;
+	const heat = $derived({
+		measured: sumMonths((m) => m.devices.chauffage),
+		estimated: a?.heating?.total ?? 0
+	});
+	const cool = $derived({
+		measured: sumMonths((m) => m.devices.clim),
+		estimated: a?.cooling?.total ?? 0
+	});
+	const heatTotal = $derived(heat.measured + heat.estimated);
+	const coolTotal = $derived(cool.measured + cool.estimated);
+	const heatShare = $derived(a ? heatTotal / a.total : 0);
+	/** Clim de juin à septembre : c'est elle qui compte pour le solaire. */
+	const coolSummer = $derived(
+		sumMonths((m) =>
+			Number(m.month.slice(5)) >= 6 && Number(m.month.slice(5)) <= 9
+				? m.devices.clim + m.cooling
+				: 0
+		)
+	);
+	const summerTotal = $derived(
+		sumMonths((m) => (Number(m.month.slice(5)) >= 6 && Number(m.month.slice(5)) <= 9 ? m.kwh : 0))
+	);
+	const CAT: Record<DeviceCategory, { label: string; color: string }> = {
+		chauffage: { label: 'Chauffage', color: 'var(--q2)' },
+		clim: { label: 'Climatisation', color: 'var(--q1)' },
+		eau: { label: 'Eau chaude', color: 'var(--q3)' },
+		autre: { label: 'Autre', color: 'var(--q4)' }
+	};
+	const measuredTotal = $derived(a ? a.devices.reduce((x, d) => x + d.kwh, 0) : 0);
+	const deviceMax = $derived(a?.devices.length ? a.devices[0].kwh : 1);
 
 	const longDay = (d: string) =>
 		new Date(d + 'T12:00:00Z').toLocaleDateString('fr-FR', {
@@ -149,11 +187,13 @@
 			/>
 			<Stat
 				label="Chauffage"
-				value={a.heating ? fmt.pct(heatShare) : 'non détecté'}
-				sub={a.heating
-					? `≈ ${fmt.kwh(a.heating.total)} · +${fmt.dec(a.heating.slope)} kWh/jour par °C`
-					: 'pas de lien net avec le froid'}
-				tone={a.heating ? 'var(--q2)' : ''}
+				value={heatTotal > 0.5 ? fmt.pct(heatShare) : 'non détecté'}
+				sub={heatTotal > 0.5
+					? `≈ ${fmt.kwh(heatTotal)}${coolTotal > 0.5 ? ` · clim ${fmt.kwh(coolTotal)}` : ''}`
+					: coolTotal > 0.5
+						? `clim ${fmt.kwh(coolTotal)}`
+						: 'pas de lien net avec le froid'}
+				tone={heatTotal > 0.5 ? 'var(--q2)' : ''}
 			/>
 			<Stat
 				label="Aux heures de soleil"
@@ -231,6 +271,18 @@
 								<dd class="num font-mono font-medium">{fmt.kwh(dayDetail.stat.heating)}</dd>
 							</div>
 						{/if}
+						{#each Object.entries(dayDetail.stat.devices) as [c, v] (c)}
+							{#if v > 0.5}
+								<div class="flex justify-between gap-2">
+									<dt class="text-muted-foreground">
+										Dont {CAT[c as DeviceCategory].label.toLowerCase()} mesuré{c === 'clim'
+											? 'e'
+											: ''}
+									</dt>
+									<dd class="num font-mono font-medium">{fmt.kwh(v)}</dd>
+								</div>
+							{/if}
+						{/each}
 						{#if dayDetail.stat.pilotable > 0.5}
 							<div class="flex justify-between gap-2">
 								<dt class="text-muted-foreground">Dont eau chaude</dt>
@@ -254,8 +306,14 @@
 				<div class="grid gap-1">
 					<h2 class="font-semibold">Mois par mois</h2>
 					<p class="text-sm text-muted-foreground">
-						Le chauffage et la climatisation sont déduits du lien entre la consommation et la
-						température ; l’eau chaude, des relevés du cumulus quand ils existent.
+						{#if a.devices.length}
+							Appareils mesurés dans Home Assistant, complétés par une estimation : le chauffage et
+							la clim non mesurés sont déduits du lien avec la température. Une clim réversible
+							compte en chauffage les jours sous 15 °C.
+						{:else}
+							Le chauffage et la climatisation sont déduits du lien entre la consommation et la
+							température ; l’eau chaude, des relevés du cumulus quand ils existent.
+						{/if}
 					</p>
 				</div>
 				<UsageMonths months={a.monthly} />
@@ -267,6 +325,7 @@
 								<th class="py-1 font-normal">Mois</th>
 								<th class="text-right font-normal">Total</th>
 								<th class="text-right font-normal">Chauffage</th>
+								<th class="text-right font-normal">Clim</th>
 								<th class="text-right font-normal">Eau chaude</th>
 								<th class="text-right font-normal">Autres</th>
 							</tr>
@@ -276,9 +335,10 @@
 								<tr class="border-t">
 									<td class="py-1 font-sans">{monthLabel(m.month)}</td>
 									<td class="text-right">{fmt.int(m.kwh)}</td>
-									<td class="text-right">{fmt.int(m.heating)}</td>
-									<td class="text-right">{fmt.int(m.pilotable)}</td>
-									<td class="text-right">{fmt.int(m.other + m.cooling)}</td>
+									<td class="text-right">{fmt.int(m.heating + m.devices.chauffage)}</td>
+									<td class="text-right">{fmt.int(m.cooling + m.devices.clim)}</td>
+									<td class="text-right">{fmt.int(m.pilotable + m.devices.eau)}</td>
+									<td class="text-right">{fmt.int(m.other + m.devices.autre)}</td>
 								</tr>
 							{/each}
 						</tbody>
@@ -290,23 +350,124 @@
 				<div class="grid gap-1">
 					<h2 class="font-semibold">Sensible à la température ?</h2>
 					<p class="text-sm text-muted-foreground">
+						{#if a.devices.length}
+							Les appareils mesurés sont retirés avant de chercher l’effet de la température.
+						{/if}
 						{#if a.heating}
 							Sous {a.heating.threshold} °C de moyenne, chaque degré en moins ajoute environ
-							<strong class="text-foreground">{fmt.dec(a.heating.slope)} kWh</strong> par jour. Le
-							chauffage pèse environ {fmt.kwh(a.heating.total)} sur l’année ({fmt.pct(heatShare)}).
+							<strong class="text-foreground">{fmt.dec(a.heating.slope)} kWh</strong> par jour
+							{a.devices.length ? 'de chauffage non mesuré' : ''}. Le chauffage pèse environ
+							{fmt.kwh(heatTotal)} sur l’année ({fmt.pct(heatShare)}{heat.measured > 0.5
+								? `, dont ${fmt.kwh(heat.measured)} mesurés`
+								: ''}).
+						{:else if heat.measured > 0.5}
+							Le chauffage mesuré pèse {fmt.kwh(heat.measured)} sur l’année ({fmt.pct(heatShare)}).
 						{:else}
 							Aucun lien net entre le froid et la consommation : le chauffage n’est probablement pas
 							électrique, ou il est déjà très bien maîtrisé.
 						{/if}
-						{#if a.cooling}
-							Au-dessus de {a.cooling.threshold} °C, la climatisation ajoute environ
-							{fmt.dec(a.cooling.slope)} kWh par jour et par degré ({fmt.kwh(a.cooling.total)} sur l’année).
+						{#if coolTotal > 0.5}
+							La climatisation pèse <strong class="text-foreground">{fmt.kwh(coolTotal)}</strong>
+							{cool.measured > 0.5
+								? cool.estimated > 0.5
+									? '(mesurée + estimée)'
+									: '(mesurée)'
+								: '(estimée)'}, dont {fmt.kwh(coolSummer)} de juin à septembre, soit
+							{fmt.pct(summerTotal ? coolSummer / summerTotal : 0)} de la consommation de l’été.
+						{:else}
+							Pas d’effet net de la chaleur : peu ou pas de climatisation.
 						{/if}
 					</p>
 				</div>
-				<TempScatter days={a.daily} heating={a.heating} cooling={a.cooling} bind:selected />
+				<TempScatter
+					days={a.devices.length ? a.daily.map((d) => ({ ...d, kwh: d.residual })) : a.daily}
+					heating={a.heating}
+					cooling={a.cooling}
+					bind:selected
+				/>
+				{#if a.devices.length}
+					<p class="text-xs text-muted-foreground">
+						Points : consommation du jour hors appareils mesurés.
+					</p>
+				{/if}
 			</section>
 		</div>
+
+		{#if a.devices.length}
+			<section class="grid gap-4 rounded-xl border bg-card p-4 sm:p-5">
+				<div class="grid gap-1">
+					<h2 class="font-semibold">Appareil par appareil</h2>
+					<p class="text-sm text-muted-foreground">
+						Mesures du tableau Énergie de Home Assistant : {fmt.kwh(measuredTotal)}, soit
+						{fmt.pct(measuredTotal / a.total)} de la consommation{a.pilotable > 0.5
+							? `, plus ${fmt.kwh(a.pilotable)} d’eau chaude pilotable`
+							: ''}. Le reste n’est pas mesuré à part.
+					</p>
+				</div>
+				<ul class="grid gap-3">
+					{#each a.devices as d (d.name)}
+						{@const mmax = Math.max(0.1, ...d.monthly)}
+						<li class="grid gap-x-4 gap-y-1 sm:grid-cols-[minmax(0,1fr)_160px]">
+							<div class="grid min-w-0 gap-1">
+								<div class="flex items-baseline justify-between gap-2 text-sm">
+									<span class="flex min-w-0 items-center gap-2">
+										<span
+											class="size-2.5 shrink-0 rounded-[3px]"
+											style:background={CAT[d.category].color}
+										></span>
+										<span class="truncate">{d.name}</span>
+									</span>
+									<span class="num shrink-0 font-mono font-medium"
+										>{fmt.kwh(d.kwh)}
+										<span class="font-normal text-muted-foreground"
+											>· {fmt.pct(d.kwh / a.total)}</span
+										></span
+									>
+								</div>
+								<div class="h-1.5 rounded-full bg-secondary">
+									<div
+										class="h-1.5 rounded-full"
+										style:width="{(100 * d.kwh) / deviceMax}%"
+										style:background={CAT[d.category].color}
+									></div>
+								</div>
+								<span class="text-xs text-muted-foreground"
+									>{CAT[d.category].label}{d.coverage < 0.9
+										? ` · mesuré sur ${fmt.pct(d.coverage)} de l’année`
+										: ''}</span
+								>
+							</div>
+							<svg
+								class="h-8 w-full"
+								viewBox="0 0 {d.monthly.length * 10} 32"
+								preserveAspectRatio="none"
+								role="img"
+								aria-label="{d.name}, mois par mois : {d.monthly
+									.map((v, i) => `${monthLabel(a.monthly[i].month)} ${fmt.int(v)} kWh`)
+									.join(', ')}"
+							>
+								{#each d.monthly as v, i (i)}
+									<rect
+										x={i * 10 + 1}
+										y={32 - (30 * v) / mmax}
+										width="8"
+										height={(30 * v) / mmax}
+										rx="1.5"
+										fill={CAT[d.category].color}
+									>
+										<title>{monthLabel(a.monthly[i].month)} : {fmt.kwh(v)}</title>
+									</rect>
+								{/each}
+							</svg>
+						</li>
+					{/each}
+				</ul>
+				<p class="text-xs text-muted-foreground">
+					Rangement d’après le nom de l’appareil. Une mesure plus récente que l’année étudiée n’est
+					pas comptée.
+				</p>
+			</section>
+		{/if}
 
 		<section class="grid gap-4 rounded-xl border bg-card p-4 sm:p-5">
 			<div class="grid gap-1">

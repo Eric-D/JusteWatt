@@ -281,7 +281,8 @@ class AppStore {
 		);
 		const raw: RawHa = {
 			hours: [...r.hours].map(([t, v]) => [t, v.load, v.pilotable]),
-			solar: [...r.solar]
+			solar: [...r.solar],
+			devices: r.devices.map((d) => ({ id: d.id, name: d.name, hours: [...d.hours] }))
 		};
 		await idb.set('raw.ha', raw);
 		this.raw = { ...this.raw, ha: raw };

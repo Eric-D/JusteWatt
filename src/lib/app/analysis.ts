@@ -14,6 +14,40 @@ export const SEASONS: Season[] = ['hiver', 'printemps', 'été', 'automne'];
 const seasonOf = (month: number): Season =>
 	month === 12 || month <= 2 ? 'hiver' : month <= 5 ? 'printemps' : month <= 8 ? 'été' : 'automne';
 
+export type DeviceCategory = 'chauffage' | 'clim' | 'eau' | 'autre';
+
+/** Rangement d'un appareil d'après son nom (ou son identifiant HA). */
+export function deviceCategory(name: string): DeviceCategory {
+	const n = name
+		.toLowerCase()
+		.normalize('NFD')
+		.replace(/[\u0300-\u036f]/g, '');
+	if (/clim|split|air.?co/.test(n)) return 'clim';
+	if (/cumulus|ballon|chauffe.?eau|eau chaude|\becs\b/.test(n)) return 'eau';
+	if (/pompe.?a.?chaleur|\bpac\b|_pac_|radiateur|chauffage|convecteur|poele|plancher/.test(n))
+		return 'chauffage';
+	return 'autre';
+}
+
+export interface DeviceStat {
+	name: string;
+	category: DeviceCategory;
+	kwh: number;
+	/** Part des heures de l'année où l'appareil est mesuré (0-1). */
+	coverage: number;
+	monthly: number[];
+}
+
+/** Température moyenne sous laquelle une clim mesurée compte comme chauffage, °C. */
+const COLD_DAY = 15;
+
+const noDevices = (): Record<DeviceCategory, number> => ({
+	chauffage: 0,
+	clim: 0,
+	eau: 0,
+	autre: 0
+});
+
 export interface DayStat {
 	day: string;
 	kwh: number;
@@ -21,7 +55,11 @@ export interface DayStat {
 	temp: number;
 	weekend: boolean;
 	pilotable: number;
-	/** Part attribuée au chauffage et à la climatisation (estimation). */
+	/** Mesuré par appareil, par catégorie. */
+	devices: Record<DeviceCategory, number>;
+	/** Consommation hors appareils mesurés : c'est elle que l'on relie à la température. */
+	residual: number;
+	/** Chauffage et climatisation non mesurés, estimés par la température. */
 	heating: number;
 	cooling: number;
 }
@@ -32,6 +70,7 @@ export interface MonthStat {
 	pilotable: number;
 	heating: number;
 	cooling: number;
+	devices: Record<DeviceCategory, number>;
 	other: number;
 	method: MonthMethod | null;
 }
@@ -80,6 +119,8 @@ export interface Analysis {
 	redDays: { days: number; kwh: number };
 	/** Part couverte par les panneaux déjà installés (sans pilotage), si connue. */
 	existing: { production: number; direct: number } | null;
+	/** Appareils mesurés, du plus gros au plus petit. */
+	devices: DeviceStat[];
 }
 
 export interface AnalysisInput {
@@ -115,7 +156,7 @@ function fitThermal(
 		for (const d of days) {
 			const x = Math.max(0, sign * (d.temp - th));
 			if (x <= 0) continue;
-			sxy += x * (d.kwh - baseline);
+			sxy += x * (d.residual - baseline);
 			sxx += x * x;
 			n++;
 		}
@@ -124,7 +165,7 @@ function fitThermal(
 		let sse = 0;
 		for (const d of days) {
 			const x = Math.max(0, sign * (d.temp - th));
-			sse += (d.kwh - baseline - slope * x) ** 2;
+			sse += (d.residual - baseline - slope * x) ** 2;
 		}
 		if (!best || sse < best.sse) best = { threshold: th, slope, sse };
 	}
@@ -167,6 +208,18 @@ export function analyse(input: AnalysisInput): Analysis {
 		night = 0,
 		pilotable = 0;
 	let peak = { kwh: 0, day: '', hour: 0 };
+	const devs = cons.devices ?? [];
+	const cats = devs.map((d) => deviceCategory(d.name));
+	const devStats: DeviceStat[] = devs.map((d, k) => ({
+		name: d.name,
+		category: cats[k],
+		kwh: 0,
+		coverage: 0,
+		monthly: []
+	}));
+	const devMonthly = devs.map(() => new Map<string, number>());
+	const devDay = new Map<string, number[]>();
+	const dayDevices = new Map<string, Record<DeviceCategory, number>>();
 	for (let i = 0; i < n; i++) {
 		const v = cons.load[i];
 		const d = cons.localDay[i];
@@ -186,6 +239,16 @@ export function analyse(input: AnalysisInput): Analysis {
 			a.nt++;
 		}
 		byDay.set(d, a);
+		if (devs.length) {
+			let row = devDay.get(d);
+			if (!row) devDay.set(d, (row = new Array<number>(devs.length).fill(0)));
+			for (let k = 0; k < devs.length; k++) {
+				const x = devs[k].kwh[i];
+				if (Number.isNaN(x)) continue;
+				row[k] += Math.max(0, x);
+				devStats[k].coverage++;
+			}
+		}
 		const p = prof[seasonOf(Number(d.slice(5, 7)))];
 		if (isWeekend(d)) {
 			p.weekend[h] += v;
@@ -211,15 +274,44 @@ export function analyse(input: AnalysisInput): Analysis {
 		})
 	) as Analysis['profiles'];
 
-	const daily: DayStat[] = [...byDay].map(([day, a]) => ({
-		day,
-		kwh: a.kwh,
-		temp: a.nt ? a.t / a.nt : NaN,
-		weekend: isWeekend(day),
-		pilotable: a.pil,
-		heating: 0,
-		cooling: 0
-	}));
+	// les appareils ne peuvent pas dépasser ce que le compteur a vu ce jour-là (au jour près :
+	// dans un mois reconstitué, les heures ne se correspondent pas)
+	for (const [day, row] of devDay) {
+		const a = byDay.get(day)!;
+		// une clim réversible qui tourne un jour froid chauffe
+		const cold = a.nt > 0 && a.t / a.nt < COLD_DAY;
+		const sum = row.reduce((x, v) => x + v, 0);
+		const f = sum > 0 ? Math.min(1, Math.max(0, a.kwh - a.pil) / sum) : 0;
+		const per = noDevices();
+		const mk = day.slice(0, 7);
+		row.forEach((v, k) => {
+			const used = v * f;
+			per[cold && cats[k] === 'clim' ? 'chauffage' : cats[k]] += used;
+			devStats[k].kwh += used;
+			devMonthly[k].set(mk, (devMonthly[k].get(mk) ?? 0) + used);
+		});
+		dayDevices.set(day, per);
+	}
+	const daily: DayStat[] = [...byDay].map(([day, a]) => {
+		const devices = dayDevices.get(day) ?? noDevices();
+		const measured = devices.chauffage + devices.clim + devices.eau + devices.autre;
+		return {
+			day,
+			kwh: a.kwh,
+			temp: a.nt ? a.t / a.nt : NaN,
+			weekend: isWeekend(day),
+			pilotable: a.pil,
+			devices,
+			residual: a.kwh - measured,
+			heating: 0,
+			cooling: 0
+		};
+	});
+	const monthKeys = [...new Set(daily.map((d) => d.day.slice(0, 7)))];
+	for (let k = 0; k < devStats.length; k++) {
+		devStats[k].coverage /= n || 1;
+		devStats[k].monthly = monthKeys.map((m) => devMonthly[k].get(m) ?? 0);
+	}
 
 	const withTemp = daily.filter((d) => Number.isFinite(d.temp));
 	// le lien jour par jour avec la température n'existe que sur les mois mesurés : une
@@ -232,22 +324,22 @@ export function analyse(input: AnalysisInput): Analysis {
 	const measuredDays = withTemp.filter(isMeasured);
 	const fitDays = measuredDays.length >= 60 ? measuredDays : withTemp;
 	// talon thermique : jours doux (15-21 °C), sinon les 20 % de jours les moins chargés
-	const mild = fitDays.filter((d) => d.temp >= 15 && d.temp <= 21).map((d) => d.kwh);
+	const mild = fitDays.filter((d) => d.temp >= 15 && d.temp <= 21).map((d) => d.residual);
 	const baseline =
 		mild.length >= 10
 			? median(mild)
 			: median(
 					[...fitDays]
-						.sort((a, b) => a.kwh - b.kwh)
+						.sort((a, b) => a.residual - b.residual)
 						.slice(0, Math.max(1, Math.round(fitDays.length / 5)))
-						.map((d) => d.kwh)
+						.map((d) => d.residual)
 				);
 	const heating = fitThermal(fitDays, baseline, [12, 13, 14, 15, 16, 17], -1);
 	// la clim se mesure par rapport à un jour d'été ordinaire, plus sobre qu'un jour de
 	// mi-saison (moins d'éclairage, eau chaude plus vite chauffée)
 	const summer = fitDays
 		.filter((d) => d.temp >= 16 && d.temp <= 20 && (!heating || d.temp >= heating.threshold))
-		.map((d) => d.kwh);
+		.map((d) => d.residual);
 	const coolBase = summer.length >= 10 ? Math.min(baseline, median(summer)) : baseline;
 	const cooling = fitThermal(fitDays, coolBase, [18, 19, 20, 21, 22, 23, 24], 1, 0.15);
 	// talon : minimum horaire des jours sans chauffage ni clim (en hiver, une PAC qui tourne
@@ -260,12 +352,16 @@ export function analyse(input: AnalysisInput): Analysis {
 	const mins = pool.map((d) => byDay.get(d.day)!.min).sort((x, y) => x - y);
 	const standby = pool === daily ? (mins[Math.floor(mins.length * 0.1)] ?? 0) : median(mins);
 	for (const d of withTemp) {
-		// le talon (veille × 24 h) et l'eau chaude pilotée ne sont jamais du chauffage
-		const room = Math.max(0, d.kwh - d.pilotable - standby * 24);
+		// le talon (veille × 24 h), l'eau chaude pilotée et les appareils mesurés ne sont
+		// jamais du chauffage estimé
+		const room = Math.max(0, d.residual - d.pilotable - standby * 24);
 		if (heating && d.temp < heating.threshold)
 			d.heating = Math.min(room, heating.slope * (heating.threshold - d.temp));
 		if (cooling && d.temp > cooling.threshold)
-			d.cooling = Math.min(room - d.heating, cooling.slope * (d.temp - cooling.threshold));
+			d.cooling = Math.max(
+				0,
+				Math.min(room - d.heating, cooling.slope * (d.temp - cooling.threshold))
+			);
 	}
 	if (heating) heating.total = daily.reduce((s, d) => s + d.heating, 0);
 	if (cooling) cooling.total = daily.reduce((s, d) => s + d.cooling, 0);
@@ -279,6 +375,7 @@ export function analyse(input: AnalysisInput): Analysis {
 			pilotable: 0,
 			heating: 0,
 			cooling: 0,
+			devices: noDevices(),
 			other: 0,
 			method: methods.get(k) ?? null
 		};
@@ -286,7 +383,8 @@ export function analyse(input: AnalysisInput): Analysis {
 		m.pilotable += d.pilotable;
 		m.heating += d.heating;
 		m.cooling += d.cooling;
-		m.other += d.kwh - d.pilotable - d.heating - d.cooling;
+		for (const c of Object.keys(d.devices) as DeviceCategory[]) m.devices[c] += d.devices[c];
+		m.other += d.residual - d.pilotable - d.heating - d.cooling;
 		months.set(k, m);
 	}
 
@@ -345,6 +443,7 @@ export function analyse(input: AnalysisInput): Analysis {
 		topDays: [...daily].sort((a, b) => b.kwh - a.kwh).slice(0, 5),
 		tariffs,
 		redDays: red,
-		existing
+		existing,
+		devices: devStats.filter((d) => d.kwh > 0.5).sort((a, b) => b.kwh - a.kwh)
 	};
 }

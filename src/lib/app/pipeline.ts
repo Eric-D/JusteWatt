@@ -34,6 +34,8 @@ const DAY = 86_400_000;
 export interface RawHa {
 	hours: [number, number, number][];
 	solar: [number, number][];
+	/** Appareils mesurés du tableau Énergie (absent des imports plus anciens). */
+	devices?: { id: string; name: string; hours: [number, number][] }[];
 }
 export interface RawEnedis {
 	kind: EnedisData['kind'];
@@ -146,6 +148,14 @@ export async function prepare(
 		}
 		if (s.source.kind === 'manual') monthly = { ...s.source.manualMonthly };
 		cons = buildConsumption({ tz, startMs, endMs, curve, ha: ha.size ? ha : undefined, monthly });
+		if (raw.ha?.devices?.length && s.source.kind !== 'manual') {
+			const devices = raw.ha.devices.map((d) => {
+				const m = new Map(d.hours);
+				return { name: d.name, kwh: cons.steps.map((t) => m.get(t) ?? NaN) };
+			});
+			// un appareil dont la mesure ne couvre pas l'année étudiée n'apporte rien
+			cons.devices = devices.filter((d) => d.kwh.some((v) => !Number.isNaN(v)));
+		}
 	}
 
 	progress('Ensoleillement de votre toit (Open-Meteo)');
@@ -261,7 +271,11 @@ export function consumptionFromShared(d: SharedData): Consumption {
 		load,
 		pilotable: unpackSeries(d.pilotable),
 		months: d.months,
-		sources: [...d.sources, 'reçue par lien']
+		sources: [...d.sources, 'reçue par lien'],
+		devices: d.devices?.map((x) => ({
+			name: x.name,
+			kwh: unpackSeries(x.kwh).map((v) => (v < 0 ? NaN : v))
+		}))
 	};
 }
 

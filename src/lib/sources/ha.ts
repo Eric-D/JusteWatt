@@ -152,7 +152,10 @@ export function parseEnergyPrefs(
 	}
 	out.devices = prefs.device_consumption.map((d) => ({
 		id: d.stat_consumption,
-		name: d.name || names[d.stat_consumption] || d.stat_consumption
+		name: (d.name || names[d.stat_consumption] || d.stat_consumption)
+			// « Salon Énergie », « Clim Energy usage » : le suffixe n'apprend rien
+			.replace(/[\s_-]+(é|e)nergie$|[\s_-]+energy([\s_-]+usage)?$/i, '')
+			.trim()
 	}));
 	return out;
 }
@@ -197,16 +200,22 @@ export interface HaImport {
 }
 
 export async function readHaSetup(ha: HaClient): Promise<HaImport> {
-	const [config, prefs, meta] = await Promise.all([
+	const [config, prefs, meta, states] = await Promise.all([
 		ha.call<HaConfig>('get_config'),
 		ha.call<EnergyPrefs>('energy/get_prefs'),
 		ha.call<{ statistic_id: string; name: string | null }[]>('recorder/list_statistic_ids', {
 			statistic_type: 'sum'
-		})
+		}),
+		ha
+			.call<{ entity_id: string; attributes: { friendly_name?: string } }[]>('get_states')
+			.catch(() => [])
 	]);
-	const names = Object.fromEntries(
+	// nom affiché dans HA d'abord, puis celui des statistiques
+	const names: Record<string, string> = Object.fromEntries(
 		meta.filter((m) => m.name).map((m) => [m.statistic_id, m.name!])
 	);
+	for (const st of states)
+		if (st.attributes.friendly_name) names[st.entity_id] = st.attributes.friendly_name;
 	return { config, energy: parseEnergyPrefs(prefs, names) };
 }
 
@@ -223,13 +232,25 @@ export async function readHaConsumption(
 ): Promise<{
 	hours: Map<number, { load: number; pilotable: number }>;
 	solar: Map<number, number>;
+	/** Appareils mesurés du tableau Énergie (hors appareils pilotables), kWh par heure. */
+	devices: { id: string; name: string; hours: Map<number, number> }[];
 }> {
-	const ids = [...energy.gridImport, ...energy.gridExport, ...energy.solar, ...pilotableIds];
+	const others = energy.devices.filter((d) => !pilotableIds.includes(d.id));
+	const ids = [
+		...energy.gridImport,
+		...energy.gridExport,
+		...energy.solar,
+		...pilotableIds,
+		...others.map((d) => d.id)
+	];
 	const ch = await hourlyChanges(ha, [...new Set(ids)], startMs, endMs);
 	const hours = new Map<number, { load: number; pilotable: number }>();
 	const solar = new Map<number, number>();
 	const first = energy.gridImport[0];
-	if (!first) return { hours, solar };
+	const devices = others
+		.map((d) => ({ ...d, hours: ch.get(d.id) ?? new Map<number, number>() }))
+		.filter((d) => d.hours.size > 0);
+	if (!first) return { hours, solar, devices };
 	for (const t of ch.get(first)!.keys()) {
 		const sum = (list: string[]) => list.reduce((s, id) => s + (ch.get(id)?.get(t) ?? 0), 0);
 		const sol = sum(energy.solar);
@@ -237,5 +258,5 @@ export async function readHaConsumption(
 		if (sol) solar.set(t, sol);
 		hours.set(t, { load, pilotable: Math.min(load, sum(pilotableIds)) });
 	}
-	return { hours, solar };
+	return { hours, solar, devices };
 }

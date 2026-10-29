@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+	buildPayload,
 	decodeShare,
 	encodeShare,
 	packSeries,
@@ -8,6 +9,7 @@ import {
 	type SharePayload
 } from './share';
 import { defaultSettings } from './model';
+import { consumptionFromShared } from './pipeline';
 
 const s = defaultSettings();
 const payload: SharePayload = {
@@ -42,5 +44,32 @@ describe('lien de partage', () => {
 		expect(h).not.toContain('secret');
 		expect((await decodeShare(h, 'correct horse'))?.site?.latitude).toBe(s.site.latitude);
 		await expect(decodeShare(h, 'faux')).rejects.toBeInstanceOf(WrongPassword);
+	});
+});
+
+describe('détail par appareil', () => {
+	const cons = {
+		tz: 'Europe/Paris',
+		steps: [0, 3_600_000, 7_200_000],
+		localHour: [1, 2, 3],
+		localDay: ['2025-01-01', '2025-01-01', '2025-01-01'],
+		load: [0.5, 1.2, 0.8],
+		pilotable: [0, 0, 0],
+		months: [],
+		sources: ['Home Assistant'],
+		devices: [{ name: 'Clim chambre', kwh: [NaN, 0.4, 0] }]
+	};
+	const opts = { data: true, site: false, ha: null };
+
+	it('absent par défaut', () => {
+		expect(buildPayload(s, cons, opts).data?.devices).toBeUndefined();
+	});
+
+	it('aller-retour, heures non mesurées comprises', () => {
+		const d = buildPayload(s, cons, { ...opts, devices: true }).data!;
+		const back = consumptionFromShared(d).devices!;
+		expect(back[0].name).toBe('Clim chambre');
+		expect(Number.isNaN(back[0].kwh[0])).toBe(true);
+		expect(back[0].kwh.slice(1)).toEqual([0.4, 0]);
 	});
 });

@@ -28,6 +28,8 @@ export interface SharedData {
 	pilotable: number[];
 	months: MonthReport[];
 	sources: string[];
+	/** Appareils mesurés, Wh en écarts successifs ; −1 kWh = heure non mesurée. */
+	devices?: { name: string; kwh: number[] }[];
 }
 
 export interface SharePayload {
@@ -43,6 +45,8 @@ export interface SharePayload {
 
 export interface ShareOptions {
 	data: boolean;
+	/** Détail par appareil mesuré (avec leurs noms). */
+	devices?: boolean;
 	site: boolean;
 	ha: { url: string; token: string } | null;
 }
@@ -184,6 +188,11 @@ export function buildPayload(
 			months: cons.months,
 			sources: cons.sources
 		};
+		if (o.devices && cons.devices?.length)
+			payload.data.devices = cons.devices.map((d) => ({
+				name: d.name,
+				kwh: packSeries(d.kwh.map((v) => (Number.isNaN(v) ? -1 : v)))
+			}));
 	}
 	if (o.ha) payload.ha = o.ha;
 	return payload;

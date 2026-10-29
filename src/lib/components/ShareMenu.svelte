@@ -11,6 +11,7 @@
 
 	let open = $state(false);
 	let withData = $state(true);
+	let withDevices = $state(false);
 	let withSite = $state(true);
 	let withHa = $state(false);
 	let password = $state('');
@@ -23,16 +24,18 @@
 	const token = $derived(open ? app.token() : null);
 	const options = $derived({
 		data: withData && !!app.prepared,
+		devices: withData && withDevices,
 		site: withSite,
 		ha: withHa ? token : null
 	});
+	const devices = $derived(app.prepared?.cons.devices ?? []);
 	const mustProtect = $derived(needsPassword(options));
 	const weak = $derived(password.length > 0 && password.length < 10);
 	const blocked = $derived((mustProtect && !password) || weak);
 
 	$effect(() => {
 		// toute modification des options invalide le lien déjà fabriqué
-		void [withData, withSite, withHa, password];
+		void [withData, withDevices, withSite, withHa, password];
 		link = '';
 	});
 
@@ -123,6 +126,16 @@
 					>
 					<Switch bind:checked={withData} disabled={!app.prepared} />
 				</label>
+				{#if devices.length}
+					<label class="flex items-center justify-between gap-3 text-sm">
+						<span
+							>Détail par appareil <span class="block text-xs text-muted-foreground"
+								>{devices.length} appareils mesurés, avec leurs noms</span
+							></span
+						>
+						<Switch bind:checked={withDevices} disabled={!withData} />
+					</label>
+				{/if}
 				<label class="flex items-center justify-between gap-3 text-sm">
 					<span
 						>Position du toit <span class="block text-xs text-muted-foreground"

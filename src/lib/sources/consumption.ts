@@ -13,6 +13,13 @@ export interface Consumption {
 	months: MonthReport[];
 	/** Sources utilisées, pour l'affichage. */
 	sources: string[];
+	/** Appareils mesurés à part (tableau Énergie de HA), kWh par pas, NaN quand non mesuré. */
+	devices?: MeasuredDevice[];
+}
+
+export interface MeasuredDevice {
+	name: string;
+	kwh: number[];
 }
 
 /** Minuit local du 1er jour du mois `m` (1-12), en UTC ms. */

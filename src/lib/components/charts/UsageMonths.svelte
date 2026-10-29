@@ -7,14 +7,68 @@
 	/** Consommation mois par mois, découpée par usage estimé. */
 	let { months }: { months: MonthStat[] } = $props();
 
+	type Part = { measured: number; estimated: number };
 	// chaque usage garde sa couleur, qu'il soit présent ou non
-	const ALL = [
-		{ key: 'other', label: 'Autres usages', color: 'var(--surplus)' },
-		{ key: 'pilotable', label: 'Eau chaude pilotable', color: 'var(--q3)' },
-		{ key: 'heating', label: 'Chauffage (estimé)', color: 'var(--q2)' },
-		{ key: 'cooling', label: 'Climatisation (estimée)', color: 'var(--q1)' }
-	] as const;
-	const series = $derived(ALL.filter((s) => months.some((m) => m[s.key] > 0.5)));
+	const ALL: { key: string; label: string; color: string; part: (m: MonthStat) => Part }[] = [
+		{
+			key: 'other',
+			label: 'Autres usages',
+			color: 'var(--surplus)',
+			part: (m) => ({ measured: 0, estimated: m.other })
+		},
+		{
+			key: 'autre',
+			label: 'Autres appareils mesurés',
+			color: 'var(--q4)',
+			part: (m) => ({ measured: m.devices.autre, estimated: 0 })
+		},
+		{
+			key: 'eau',
+			label: 'Eau chaude',
+			color: 'var(--q3)',
+			part: (m) => ({ measured: m.pilotable + m.devices.eau, estimated: 0 })
+		},
+		{
+			key: 'chauffage',
+			label: 'Chauffage',
+			color: 'var(--q2)',
+			part: (m) => ({ measured: m.devices.chauffage, estimated: m.heating })
+		},
+		{
+			key: 'clim',
+			label: 'Climatisation',
+			color: 'var(--q1)',
+			part: (m) => ({ measured: m.devices.clim, estimated: m.cooling })
+		}
+	];
+	const series = $derived(
+		ALL.map((s) => {
+			const t = months.reduce(
+				(acc, m) => {
+					const p = s.part(m);
+					return { measured: acc.measured + p.measured, estimated: acc.estimated + p.estimated };
+				},
+				{ measured: 0, estimated: 0 }
+			);
+			const how =
+				s.key === 'other'
+					? ''
+					: t.measured > 0.5 && t.estimated > 0.5
+						? ' (mesuré + estimé)'
+						: t.estimated > 0.5
+							? ' (estimé)'
+							: '';
+			return {
+				...s,
+				label: s.label + how,
+				value: (m: MonthStat) => {
+					const p = s.part(m);
+					return p.measured + p.estimated;
+				},
+				total: t.measured + t.estimated
+			};
+		}).filter((s) => s.total > 0.5)
+	);
 
 	let width = $state(300);
 	const height = 240;
@@ -53,14 +107,14 @@
 				{@const w = Math.min(28, bw - 6)}
 				{@const x = pad.l + bw * i + (bw - w) / 2}
 				{#each series as s, k (s.key)}
-					{@const below = series.slice(0, k).reduce((a, p) => a + m[p.key], 0)}
-					{@const top = k === series.length - 1 || series.slice(k + 1).every((p) => m[p.key] < 0.5)}
-					{#if m[s.key] > 0.5}
+					{@const below = series.slice(0, k).reduce((a, p) => a + p.value(m), 0)}
+					{@const top = series.slice(k + 1).every((p) => p.value(m) < 0.5)}
+					{#if s.value(m) > 0.5}
 						<rect
 							{x}
-							y={y(below + m[s.key]) + (k ? 1 : 0)}
+							y={y(below + s.value(m)) + (k ? 1 : 0)}
 							width={w}
-							height={Math.max(0, y(below) - y(below + m[s.key]) - (k ? 1 : 0))}
+							height={Math.max(0, y(below) - y(below + s.value(m)) - (k ? 1 : 0))}
 							fill={s.color}
 							rx={top ? 3 : 0}
 							opacity={hover === null || hover === i ? 1 : 0.55}
@@ -104,11 +158,17 @@
 				title="{monthLabel(m.month)}{estimated(m) ? ' · estimé' : ''}"
 				rows={[
 					{ label: 'au total', value: fmt.kwh(m.kwh) },
-					...[...series].reverse().map((s) => ({
-						label: s.label.replace(/ \(.*\)/, '').toLowerCase(),
-						value: fmt.kwh(m[s.key]),
-						color: s.color
-					}))
+					...[...series].reverse().map((s) => {
+						const p = s.part(m);
+						const both = p.measured > 0.5 && p.estimated > 0.5;
+						return {
+							label:
+								s.label.replace(/ \(.*\)/, '').toLowerCase() +
+								(both ? ` (${fmt.int(p.measured)} mesurés)` : ''),
+							value: fmt.kwh(s.value(m)),
+							color: s.color
+						};
+					})
 				]}
 			/>
 		{/if}
