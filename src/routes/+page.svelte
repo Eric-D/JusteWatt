@@ -2,7 +2,7 @@
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { app } from '#lib/app/store.svelte.js';
-	import { readShared } from '#lib/app/share.js';
+	import { decodeShare, shareKind, WrongPassword, type SharePayload } from '#lib/app/share.js';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { Input } from '#lib/components/ui/input/index.js';
 	import { Label } from '#lib/components/ui/label/index.js';
@@ -12,11 +12,32 @@
 	let url = $state(app.settings.source.haUrl || '');
 	let token = $state('');
 	let showManual = $state(false);
-	let shared = $state<Awaited<ReturnType<typeof readShared>>>(null);
+	let shared = $state<SharePayload | null>(null);
+	let locked = $state(false);
+	let sharePw = $state('');
+	let unlocking = $state(false);
+	let shareError = $state('');
 
 	onMount(async () => {
-		shared = await readShared(location.hash);
+		const k = shareKind(location.hash);
+		if (k === 'encrypted') locked = true;
+		else if (k === 'plain') shared = await decodeShare(location.hash).catch(() => null);
 	});
+
+	async function unlock(e: SubmitEvent) {
+		e.preventDefault();
+		unlocking = true;
+		shareError = '';
+		try {
+			shared = await decodeShare(location.hash, sharePw);
+			locked = false;
+		} catch (err) {
+			shareError =
+				err instanceof WrongPassword ? 'Mot de passe incorrect' : 'Lien illisible ou incomplet';
+		} finally {
+			unlocking = false;
+		}
+	}
 
 	async function connect(e: SubmitEvent) {
 		e.preventDefault();
@@ -35,20 +56,14 @@
 	}
 	async function applyShared() {
 		if (!shared) return;
-		const s = app.settings;
-		Object.assign(s, {
-			economics: shared.economics,
-			current: shared.current,
-			scenarios: shared.scenarios,
-			quotes: shared.quotes,
-			evolutions: shared.evolutions
-		});
-		s.site.planes = shared.planes;
-		history.replaceState(null, '', location.pathname);
+		const p = $state.snapshot(shared);
 		shared = null;
-		if (!app.hasData) await app.startDemoKeeping();
-		else await app.recompute();
-		goto(resolve('/devis'));
+		await app.openShared(p);
+		// remplace l'entrée d'historique : le lien (et son contenu) quitte la barre d'adresse
+		if (!app.error)
+			await goto(resolve(p.project.quotes.length ? '/devis' : '/simulateur'), {
+				replaceState: true
+			});
 	}
 </script>
 
@@ -56,16 +71,53 @@
 	<title>JusteWatt — simulateur solaire</title>
 </svelte:head>
 
-{#if shared}
-	<div class="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-card p-4">
-		<div>
-			<div class="font-medium">Projet partagé</div>
-			<div class="text-sm text-muted-foreground">
-				{shared.quotes.length} devis, {shared.scenarios.length} scénarios. Il sera rejoué sur votre consommation
-				(ou les données de démonstration).
-			</div>
+{#if locked}
+	<form
+		class="mb-6 grid gap-3 rounded-xl border bg-card p-4 sm:grid-cols-[1fr_auto] sm:items-end"
+		onsubmit={unlock}
+	>
+		<div class="grid gap-1.5">
+			<label for="open-pw" class="font-medium">Projet partagé protégé</label>
+			<Input
+				id="open-pw"
+				type="password"
+				bind:value={sharePw}
+				placeholder="Mot de passe"
+				autocomplete="off"
+				required
+			/>
+			{#if shareError}<p class="text-sm text-destructive" role="alert">{shareError}</p>{/if}
 		</div>
-		<Button onclick={applyShared}>Ouvrir ce projet</Button>
+		<Button type="submit" disabled={unlocking}
+			>{unlocking ? 'Déchiffrement…' : 'Déverrouiller'}</Button
+		>
+	</form>
+{/if}
+{#if shared}
+	<div class="mb-6 grid gap-3 rounded-xl border bg-card p-4">
+		<div class="font-medium">Projet partagé</div>
+		<ul class="grid gap-0.5 text-sm text-muted-foreground">
+			<li>
+				{shared.project.quotes.length} devis · {shared.project.scenarios.length} scénarios · hypothèses
+				et toit
+			</li>
+			{#if shared.data}<li>
+					Consommation heure par heure ({shared.data.sources.join(' + ')})
+				</li>{/if}
+			{#if shared.site}<li>Position : {shared.site.name || 'coordonnées du toit'}</li>{/if}
+			{#if shared.ha}<li class="text-foreground">
+					Connexion Home Assistant : {shared.ha.url}
+				</li>{/if}
+			{#if !shared.data && !shared.ha}<li>
+					Sans consommation : rejoué sur les données de démonstration
+				</li>{/if}
+		</ul>
+		<div class="flex flex-wrap items-center gap-3">
+			<Button onclick={applyShared} disabled={!!app.busy}>Ouvrir ce projet</Button>
+			{#if app.hasData}<span class="text-xs text-muted-foreground"
+					>Remplace le projet enregistré sur cet appareil.</span
+				>{/if}
+		</div>
 	</div>
 {/if}
 

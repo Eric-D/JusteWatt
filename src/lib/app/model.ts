@@ -88,7 +88,7 @@ export interface GridChargeSettings {
 }
 
 export interface SourceSettings {
-	kind: 'none' | 'demo' | 'ha' | 'enedis' | 'manual';
+	kind: 'none' | 'demo' | 'ha' | 'enedis' | 'manual' | 'shared';
 	haUrl: string;
 	/** Statistiques HA choisies comme pilotables (cumulus…). */
 	haPilotable: string[];

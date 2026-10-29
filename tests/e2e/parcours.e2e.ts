@@ -92,3 +92,38 @@ test('mode sombre et page sans débordement sur mobile', async ({ page }) => {
 	await page.getByRole('button', { name: 'Thème sombre' }).click();
 	await expect(page.locator('html')).toHaveClass(/dark/);
 });
+
+test('lien de partage chiffré : mêmes résultats chez le destinataire', async ({
+	page,
+	browser
+}) => {
+	await page.goto('/');
+	await page.getByRole('button', { name: /démonstration/ }).click();
+	await expect(page.getByText('Autonomie', { exact: true })).toBeVisible();
+	const value = (p: typeof page) => p.locator('text=Autonomie >> xpath=../div[2]').textContent();
+	const before = await value(page);
+
+	await page.getByRole('button', { name: /Partager/ }).click();
+	const create = page.getByRole('button', { name: 'Créer et copier le lien' });
+	await expect(create).toBeDisabled(); // position incluse : mot de passe obligatoire
+	await page.getByLabel(/Mot de passe/).fill('un mot de passe solide');
+	await create.click();
+	const link = await page.getByLabel('Lien de partage').inputValue();
+	expect(link).toContain('#e=');
+	expect(link).not.toContain('Lyon');
+
+	const other = await browser.newPage();
+	await mockApis(other);
+	await other.goto(link.replace(/^https?:\/\/[^/]+/, 'http://localhost:4173'));
+	await other.getByPlaceholder('Mot de passe').fill('faux mot de passe');
+	await other.getByRole('button', { name: 'Déverrouiller' }).click();
+	await expect(other.getByText('Mot de passe incorrect')).toBeVisible();
+	await other.getByPlaceholder('Mot de passe').fill('un mot de passe solide');
+	await other.getByRole('button', { name: 'Déverrouiller' }).click();
+	await expect(other.getByText(/Consommation heure par heure/)).toBeVisible();
+	await other.getByRole('button', { name: 'Ouvrir ce projet' }).click();
+	await expect(other).toHaveURL(/simulateur/, { timeout: 30_000 });
+	await expect(other.getByRole('alert')).toHaveCount(0);
+	await expect.poll(() => value(other)).toBe(before);
+	expect(other.url()).not.toContain('#e=');
+});

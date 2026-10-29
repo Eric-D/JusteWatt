@@ -11,6 +11,13 @@ import {
 import { idb } from './idb';
 import { defaultSettings, defaultTariff, uid, type ProjectSettings, type Scenario } from './model';
 import { prepare, toRawEnedis, type RawEnedis, type RawHa } from './pipeline';
+import {
+	buildPayload,
+	encodeShare,
+	type SharedData,
+	type SharePayload,
+	type ShareOptions
+} from './share';
 import type { WorkerRequest } from './worker';
 import { HaClient, readHaConsumption, readHaSetup, type HaImport } from '#lib/sources/ha.js';
 import { parseEnedisCsv } from '#lib/sources/enedis.js';
@@ -37,7 +44,11 @@ type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void };
 class AppStore {
 	settings = $state<ProjectSettings>(load());
 	prepared = $state.raw<Prepared | null>(null);
-	raw = $state.raw<{ ha: RawHa | null; enedis: RawEnedis | null }>({ ha: null, enedis: null });
+	raw = $state.raw<{ ha: RawHa | null; enedis: RawEnedis | null; shared: SharedData | null }>({
+		ha: null,
+		enedis: null,
+		shared: null
+	});
 	ha = $state.raw<HaImport | null>(null);
 	measuredRatio = $state<number | null>(null);
 	busy = $state('');
@@ -106,11 +117,12 @@ class AppStore {
 				}
 			});
 		});
-		const [ha, enedis] = await Promise.all([
+		const [ha, enedis, shared] = await Promise.all([
 			idb.get<RawHa>('raw.ha'),
-			idb.get<RawEnedis>('raw.enedis')
+			idb.get<RawEnedis>('raw.enedis'),
+			idb.get<SharedData>('raw.shared')
 		]);
-		this.raw = { ha: ha ?? null, enedis: enedis ?? null };
+		this.raw = { ha: ha ?? null, enedis: enedis ?? null, shared: shared ?? null };
 		this.ready = true;
 		if (this.hasData) await this.recompute();
 	}
@@ -209,6 +221,7 @@ class AppStore {
 			try {
 				this.ha = await readHaSetup(client);
 				await this.loadHaHistory(client);
+				this.settings.source.kind = 'ha';
 			} finally {
 				client.close();
 			}
@@ -272,10 +285,59 @@ class AppStore {
 		await idb.clear();
 		this.settings = defaultSettings();
 		this.prepared = null;
-		this.raw = { ha: null, enedis: null };
+		this.raw = { ha: null, enedis: null, shared: null };
 		this.ha = null;
 		this.map = null;
 		this.spread = null;
+	}
+
+	// --- partage par lien
+
+	/** Fragment d'URL (« p=… » ou « e=… ») pour l'état actuel. */
+	async shareFragment(o: ShareOptions, password: string): Promise<string> {
+		const payload = buildPayload($state.snapshot(this.settings), this.prepared?.cons ?? null, o);
+		return encodeShare(payload, password);
+	}
+
+	/** Remplace le projet de cet appareil par celui reçu (copie de travail). */
+	async openShared(received: SharePayload) {
+		// copie simple : un objet réactif ne peut pas être transmis au Web Worker
+		const p = structuredClone($state.snapshot(received));
+		const s = defaultSettings();
+		const pr = p.project;
+		Object.assign(s, {
+			economics: pr.economics,
+			current: pr.current,
+			scenarios: pr.scenarios,
+			quotes: pr.quotes,
+			evolutions: pr.evolutions,
+			cumulus: pr.cumulus ?? s.cumulus,
+			gridCharge: pr.gridCharge ?? s.gridCharge
+		});
+		s.site.planes = pr.planes;
+		s.site.surface = pr.surface ?? s.site.surface;
+		if (p.site) Object.assign(s.site, p.site);
+		await idb.del('raw.ha');
+		await idb.del('raw.enedis');
+		if (p.data) {
+			await idb.set('raw.shared', p.data);
+			s.source.kind = 'shared';
+		} else await idb.del('raw.shared');
+		this.raw = { ha: null, enedis: null, shared: p.data ?? null };
+		if (p.ha) {
+			localStorage.setItem(TOKEN_KEY, JSON.stringify(p.ha));
+			s.source.haUrl = p.ha.url;
+			if (!p.data) s.source.kind = 'ha';
+		} else localStorage.removeItem(TOKEN_KEY);
+		this.ha = null;
+		this.settings = s;
+		if (!p.data && !p.ha) {
+			// projet seul : rejoué sur les données de démonstration
+			await this.startDemoKeeping();
+			return;
+		}
+		if (s.source.kind === 'ha') await this.refreshHa();
+		else await this.recompute();
 	}
 
 	// --- calculs lourds dans un Web Worker

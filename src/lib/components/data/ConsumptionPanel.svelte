@@ -28,7 +28,8 @@
 			demo: 'Démonstration',
 			ha: 'Home Assistant',
 			enedis: 'Fichier Enedis',
-			manual: 'Factures saisies'
+			manual: 'Factures saisies',
+			shared: 'Reçue par lien'
 		}[s.source.kind]
 	);
 	const endOptions = $derived.by(() => {

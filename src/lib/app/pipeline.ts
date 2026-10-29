@@ -23,6 +23,7 @@ import { demoHours } from '#lib/sources/demo.js';
 import { monthlyFromDaily, type EnedisData } from '#lib/sources/enedis.js';
 import type { HourSample } from '#lib/engine/fusion.js';
 import type { Prepared } from './compute';
+import { unpackSeries, type SharedData } from './share';
 import { idb } from './idb';
 import type { Plane, ProjectSettings, SiteSettings } from './model';
 
@@ -103,19 +104,22 @@ export interface PrepareResult {
 
 export async function prepare(
 	s: ProjectSettings,
-	raw: { ha: RawHa | null; enedis: RawEnedis | null },
+	raw: { ha: RawHa | null; enedis: RawEnedis | null; shared: SharedData | null },
 	progress: (msg: string) => void
 ): Promise<PrepareResult> {
 	const tz = s.site.tz;
 	const endMonth = s.source.endMonth || defaultEndMonth(s, raw.enedis);
 	const { startMs, endMs } = yearBefore(endMonth, tz);
+	const shared = s.source.kind === 'shared' ? raw.shared : null;
 
 	progress('Reconstruction de la consommation');
 	let cons: Consumption;
 	const ha = new Map<number, HourSample>(
 		(raw.ha?.hours ?? []).map(([t, load, pilotable]) => [t, { load, pilotable }])
 	);
-	if (s.source.kind === 'demo') {
+	if (shared) {
+		cons = consumptionFromShared(shared);
+	} else if (s.source.kind === 'demo') {
 		cons = buildConsumption({ tz, startMs, endMs, ha: demoHours(startMs, endMs, tz) });
 		cons.sources = ['Démonstration'];
 	} else {
@@ -181,6 +185,23 @@ export async function prepare(
 	}
 
 	return { prepared: { cons, temp: main.temp, pv: main.pv, pvYears }, measuredRatio };
+}
+
+/** Année reçue par un lien de partage : déjà fusionnée, on recalcule seulement le calendrier local. */
+export function consumptionFromShared(d: SharedData): Consumption {
+	const load = unpackSeries(d.load);
+	const steps = load.map((_, i) => d.start + i * 3_600_000);
+	const parts = steps.map((t) => localParts(t, d.tz));
+	return {
+		tz: d.tz,
+		steps,
+		localHour: parts.map((p) => p.hour),
+		localDay: parts.map((p) => p.day),
+		load,
+		pilotable: unpackSeries(d.pilotable),
+		months: d.months,
+		sources: [...d.sources, 'reçue par lien']
+	};
 }
 
 /** Masque d'horizon depuis le relief (API elevation d'Open-Meteo, données Copernicus 90 m). */
