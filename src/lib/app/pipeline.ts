@@ -148,7 +148,7 @@ export async function prepare(
 		}
 		if (s.source.kind === 'manual') monthly = { ...s.source.manualMonthly };
 		cons = buildConsumption({ tz, startMs, endMs, curve, ha: ha.size ? ha : undefined, monthly });
-		if (raw.ha?.devices?.length && s.source.kind !== 'manual') {
+		if (raw.ha?.devices?.length) {
 			const devices = raw.ha.devices.map((d) => {
 				const m = new Map(d.hours);
 				return { name: d.name, kwh: cons.steps.map((t) => m.get(t) ?? NaN) };
