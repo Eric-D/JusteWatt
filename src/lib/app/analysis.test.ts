@@ -47,8 +47,8 @@ describe('analyse de la consommation', () => {
 			cons.load.reduce((s, v) => s + v, 0),
 			6
 		);
-		expect(a.standby).toBeGreaterThan(0.3);
-		expect(a.standby).toBeLessThan(0.7);
+		// talon pris sur les jours sans chauffage : la veille réelle
+		expect(a.standby).toBeCloseTo(0.3, 2);
 		expect(a.pilotable).toBeCloseTo(2 * days, 6);
 		expect(a.monthly.reduce((s, m) => s + m.kwh, 0)).toBeCloseTo(a.total, 6);
 	});

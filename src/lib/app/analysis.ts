@@ -219,22 +219,39 @@ export function analyse(input: AnalysisInput): Analysis {
 		heating: 0,
 		cooling: 0
 	}));
-	const standby = median([...byDay.values()].map((a) => a.min));
 
-	// talon thermique : jours doux (15-21 °C), sinon les 20 % de jours les moins chargés
 	const withTemp = daily.filter((d) => Number.isFinite(d.temp));
-	const mild = withTemp.filter((d) => d.temp >= 15 && d.temp <= 21).map((d) => d.kwh);
+	// le lien jour par jour avec la température n'existe que sur les mois mesurés : une
+	// forme horaire empruntée à un autre mois le brouillerait
+	const methods = new Map(cons.months.map((m) => [m.month, m.method]));
+	const isMeasured = (d: DayStat) => {
+		const m = methods.get(d.day.slice(0, 7));
+		return !m || m === 'ha';
+	};
+	const measuredDays = withTemp.filter(isMeasured);
+	const fitDays = measuredDays.length >= 60 ? measuredDays : withTemp;
+	// talon thermique : jours doux (15-21 °C), sinon les 20 % de jours les moins chargés
+	const mild = fitDays.filter((d) => d.temp >= 15 && d.temp <= 21).map((d) => d.kwh);
 	const baseline =
 		mild.length >= 10
 			? median(mild)
 			: median(
-					[...withTemp]
+					[...fitDays]
 						.sort((a, b) => a.kwh - b.kwh)
-						.slice(0, Math.max(1, Math.round(withTemp.length / 5)))
+						.slice(0, Math.max(1, Math.round(fitDays.length / 5)))
 						.map((d) => d.kwh)
 				);
-	const heating = fitThermal(withTemp, baseline, [12, 13, 14, 15, 16, 17], -1);
-	const cooling = fitThermal(withTemp, baseline, [20, 21, 22, 23, 24], 1);
+	const heating = fitThermal(fitDays, baseline, [12, 13, 14, 15, 16, 17], -1);
+	const cooling = fitThermal(fitDays, baseline, [20, 21, 22, 23, 24], 1);
+	// talon : minimum horaire des jours sans chauffage ni clim (en hiver, une PAC qui tourne
+	// la nuit le gonflerait), de préférence sur les mois réellement mesurés
+	const neutral = withTemp.filter(
+		(d) => (!heating || d.temp >= heating.threshold) && (!cooling || d.temp <= cooling.threshold)
+	);
+	const measured = neutral.filter(isMeasured);
+	const pool = measured.length >= 20 ? measured : neutral.length >= 20 ? neutral : daily;
+	const mins = pool.map((d) => byDay.get(d.day)!.min).sort((x, y) => x - y);
+	const standby = pool === daily ? (mins[Math.floor(mins.length * 0.1)] ?? 0) : median(mins);
 	for (const d of withTemp) {
 		// le talon (veille × 24 h) et l'eau chaude pilotée ne sont jamais du chauffage
 		const room = Math.max(0, d.kwh - d.pilotable - standby * 24);
@@ -246,7 +263,6 @@ export function analyse(input: AnalysisInput): Analysis {
 	if (heating) heating.total = daily.reduce((s, d) => s + d.heating, 0);
 	if (cooling) cooling.total = daily.reduce((s, d) => s + d.cooling, 0);
 
-	const methods = new Map(cons.months.map((m) => [m.month, m.method]));
 	const months = new Map<string, MonthStat>();
 	for (const d of daily) {
 		const k = d.day.slice(0, 7);
