@@ -148,7 +148,7 @@
 	<div class="grid content-start gap-4">
 		<section class="grid gap-3 rounded-xl border bg-card p-4">
 			<h3 class="text-sm font-semibold">Sources</h3>
-			{#if s.source.kind === 'ha' || app.raw.ha}
+			{#if s.source.kind === 'ha' || app.raw.ha || app.token()}
 				<div class="grid gap-2 text-sm">
 					<div class="flex items-center justify-between gap-2">
 						<span>Home Assistant {app.ha ? `· ${app.ha.energy.devices.length} appareils` : ''}</span
@@ -160,6 +160,12 @@
 							disabled={!!app.busy || !app.token()}>Relire</Button
 						>
 					</div>
+					{#if s.source.kind === 'shared'}
+						<p class="text-xs text-muted-foreground">
+							La consommation vient du lien reçu. « Relire » la remplace par l’historique de Home
+							Assistant, avec le détail par appareil.
+						</p>
+					{/if}
 					{#if app.ha}
 						<details>
 							<summary class="cursor-pointer text-xs text-muted-foreground"
