@@ -34,8 +34,8 @@ export default defineConfig(
 		}
 	},
 	{
-		// Override or add rule settings here, such as:
-		// 'svelte/button-has-type': 'error'
-		rules: {}
+		// liens externes (démarches) et bouton générique de shadcn : resolve() déjà fait par l'appelant
+		files: ['src/lib/components/ui/button/button.svelte', 'src/routes/demarches/+page.svelte'],
+		rules: { 'svelte/no-navigation-without-resolve': 'off' }
 	}
 );
