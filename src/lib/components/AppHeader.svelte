@@ -8,6 +8,7 @@
 	import ShareMenu from './ShareMenu.svelte';
 
 	const links = [
+		{ href: '/analyse', label: 'Analyse' },
 		{ href: '/simulateur', label: 'Simulateur' },
 		{ href: '/carte', label: 'Carte' },
 		{ href: '/devis', label: 'Devis' },

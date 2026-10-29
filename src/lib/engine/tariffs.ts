@@ -31,10 +31,13 @@ const dayBefore = (d: string) => {
 export function tempoCalendar(dailyTemp: Map<string, number>): Map<string, TempoColor> {
 	const out = new Map<string, TempoColor>();
 	const seasons = new Map<number, string[]>();
+	// une année glissante couvre chaque mois une fois : une seule saison, sinon on
+	// compterait 22 jours rouges de chaque côté du 1er septembre
+	const rolling = dailyTemp.size <= 366;
 	for (const d of dailyTemp.keys()) {
 		out.set(d, 'bleu');
 		const y = Number(d.slice(0, 4));
-		const season = Number(d.slice(5, 7)) >= 9 ? y : y - 1; // saison du 1er sept. au 31 août
+		const season = rolling ? 0 : Number(d.slice(5, 7)) >= 9 ? y : y - 1; // saison du 1er sept. au 31 août
 		if (!seasons.has(season)) seasons.set(season, []);
 		seasons.get(season)!.push(d);
 	}

@@ -145,3 +145,19 @@ test('j’ai déjà des panneaux : ce que rapporte une batterie', async ({ page 
 	await expect(page.getByRole('tab', { name: 'Mes panneaux' })).toBeVisible();
 	await expect(page.getByText('Mes panneaux actuels')).toBeVisible();
 });
+
+test('analyse de la consommation', async ({ page }) => {
+	await page.goto('/');
+	await page.getByRole('button', { name: /démonstration/ }).click();
+	await expect(page).toHaveURL(/simulateur/);
+	await page.getByRole('link', { name: 'Analyse' }).first().click();
+	await expect(page.getByRole('heading', { name: 'L’année heure par heure' })).toBeVisible();
+	await expect(page.getByText('Talon (veille)')).toBeVisible();
+	await expect(page.getByText('la moins chère')).toBeVisible();
+	// le jour détaillé suit le clavier sur la carte de chaleur
+	const map = page.getByRole('slider', { name: /Jour affiché en détail/ });
+	const before = await map.getAttribute('aria-valuetext');
+	await map.focus();
+	await map.press('ArrowRight');
+	await expect(map).not.toHaveAttribute('aria-valuetext', before!);
+});
