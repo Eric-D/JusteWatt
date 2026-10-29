@@ -1,11 +1,9 @@
 export interface FinanceInput {
 	investment: number;
-	/** kWh/an non achetés au réseau (année 1). */
-	avoidedKwh: number;
-	/** kWh/an vendus (année 1). */
-	exportedKwh: number;
-	buyPrice: number;
-	sellPrice: number;
+	/** Facture évitée l'année 1, € (indexée sur l'inflation ensuite). */
+	savings: number;
+	/** Revente du surplus l'année 1, € (prix garanti, non indexé). */
+	exportRevenue: number;
 	/** Hausse annuelle du prix d'achat (0.03 = 3 %). */
 	inflation: number;
 	/** Perte annuelle de production (0.005 = 0,5 %). */
@@ -36,8 +34,7 @@ export function finance(f: FinanceInput): FinanceResult {
 	for (let t = 1; t <= f.years; t++) {
 		const deg = Math.pow(1 - f.degradation, t - 1);
 		const infl = Math.pow(1 + f.inflation, t - 1);
-		let cf =
-			(f.avoidedKwh * f.buyPrice * infl + f.exportedKwh * f.sellPrice) * deg - f.yearlyCosts * infl;
+		let cf = (f.savings * infl + f.exportRevenue) * deg - f.yearlyCosts * infl;
 		for (const r of f.replacements) if (r.year === t) cf -= r.cost;
 		cashflows.push(cf);
 	}

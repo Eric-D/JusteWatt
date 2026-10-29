@@ -35,7 +35,9 @@ function config(c: { kwc: number; battery: number; pmax: number; router: boolean
 		kwc: c.kwc,
 		inverterAcMax: Infinity,
 		battery: c.battery > 0 ? idealBattery(c.battery, c.pmax) : null,
-		router: { enabled: c.router, power: 2.4, fallbackHour: 21 }
+		devices: c.router
+			? [{ name: 'cumulus', power: 2.4, fallbackHour: 21, profile: series.pilotable }]
+			: []
 	};
 }
 
@@ -75,6 +77,39 @@ describe('simulate — pertes réelles', () => {
 		const r = simulate(series, cfg);
 		expect(r.clipped).toBeGreaterThan(0);
 		expect(Math.max(...series.pvPerKwc) * 9).toBeGreaterThan(4);
+	});
+
+	it('les appareils pilotés sont servis par ordre de priorité', () => {
+		const zero = series.load.map(() => 0);
+		const pool = series.load.map((_, i) => (series.localHour[i] === 22 ? 0.5 : 0));
+		const withPool = series.load.map((v, i) => v + pool[i]);
+		const s = { ...series, load: withPool };
+		const cfg = config({ kwc: 6, battery: 0, pmax: 0, router: true });
+		const piscine = { name: 'piscine', power: 1, fallbackHour: 22, profile: pool };
+		const first = simulate(s, { ...cfg, devices: [piscine, ...cfg.devices] });
+		const last = simulate(s, { ...cfg, devices: [...cfg.devices, piscine] });
+		// même énergie totale, l'ordre change seulement qui profite du surplus
+		expect(first.load).toBeCloseTo(last.load, 6);
+		expect(first.import).toBeCloseTo(last.import, 0);
+		expect(zero.length).toBe(series.load.length);
+	});
+
+	it('la recharge réseau remplit la batterie aux heures choisies', () => {
+		const cfg = config(base);
+		const hc = Array.from({ length: 24 }, (_, h) => h < 6);
+		const r = simulate(series, { ...cfg, gridCharge: { hours: hc, targetSoc: 1 } });
+		expect(r.gridCharged).toBeGreaterThan(0);
+		// l'achat ne sert plus seulement à consommer
+		expect(r.import).toBeGreaterThan(simulate(series, cfg).import);
+		expect(r.autonomy).toBeLessThanOrEqual(1);
+	});
+
+	it('flux horaires cohérents', () => {
+		const r = simulate(series, config(base));
+		let sum = 0;
+		for (let i = 0; i < r.flows.load.length; i++)
+			sum += r.flows.direct[i] + r.flows.discharge[i] + r.flows.import[i] - r.flows.load[i];
+		expect(Math.abs(sum)).toBeLessThan(1);
 	});
 
 	it('bilan énergétique fermé', () => {

@@ -5,7 +5,7 @@ export interface HourSample {
 	pilotable: number;
 }
 
-export type MonthMethod = 'ha' | 'borrowed' | 'excluded';
+export type MonthMethod = 'ha' | 'borrowed' | 'excluded' | 'profile';
 
 export interface MonthReport {
 	month: string;
@@ -29,6 +29,8 @@ export interface FusionInput {
 	factorRange?: [number, number];
 	/** Couverture minimale pour juger le facteur d'un mois. */
 	minCoverage?: number;
+	/** Profil type (mois 0-11, heure) quand aucune mesure horaire n'existe. */
+	fallback?: (month: number, hour: number) => number;
 }
 
 export interface FusionResult {
@@ -80,6 +82,8 @@ export function fuse(input: FusionInput): FusionResult {
 		});
 	}
 	const excluded = new Set(months.filter((x) => x.method === 'excluded').map((x) => x.month));
+	if (!months.some((x) => x.method === 'ha'))
+		for (const x of months) if (x.method === 'borrowed') x.method = 'profile';
 
 	// 2. profil moyen (mois de l'année × heure locale) à partir des mois sains
 	const acc = Array.from({ length: 12 }, () =>
@@ -105,7 +109,7 @@ export function fuse(input: FusionInput): FusionResult {
 					break;
 				}
 			}
-		if (best < 0) return { load: 1, pil: 0 };
+		if (best < 0) return { load: input.fallback?.(monthIdx, hour) ?? 1, pil: 0 };
 		const c = acc[best][hour];
 		return c.n ? { load: c.load / c.n, pil: c.pil / c.n } : { load: 0, pil: 0 };
 	};

@@ -3,10 +3,8 @@ import { finance, type FinanceInput } from './finance';
 
 const kit: FinanceInput = {
 	investment: 5608,
-	avoidedKwh: 6600,
-	exportedKwh: 0,
-	buyPrice: 0.21,
-	sellPrice: 0,
+	savings: 6600 * 0.21,
+	exportRevenue: 0,
 	inflation: 0.03,
 	degradation: 0.005,
 	years: 15,
@@ -42,6 +40,6 @@ describe('finance', () => {
 	});
 
 	it('jamais rentable → payback null', () => {
-		expect(finance({ ...kit, avoidedKwh: 10 }).payback).toBeNull();
+		expect(finance({ ...kit, savings: 2 }).payback).toBeNull();
 	});
 });
